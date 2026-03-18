@@ -1,0 +1,7 @@
+streamlit
+ollama
+faiss-cpu
+sentence-transformers
+pymupdf  # Replaces pdfminer for better performance and page tracking
+pandas
+sqlite3
