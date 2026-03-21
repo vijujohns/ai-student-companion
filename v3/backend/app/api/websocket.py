@@ -5,6 +5,8 @@ WebSocket streaming
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.modules.rag import generate_answer
 import asyncio
+from fastapi import Query
+
 
 websocket_router = APIRouter()
 
@@ -22,6 +24,7 @@ async def websocket_endpoint(ws: WebSocket):
 """
 WebSocket for streaming responses
 """
+
 @websocket_router.websocket("/ws/ask")
 async def websocket_ask(websocket: WebSocket):
     print("🔥 WebSocket connection request received")
@@ -33,11 +36,10 @@ async def websocket_ask(websocket: WebSocket):
         while True:
             data = await websocket.receive_text()
 
-            # Run LLM in thread
+            # Run LLM in thread (non-blocking)
             answer = await asyncio.to_thread(generate_answer, data)
 
             words = answer.split()
-
             for word in words:
                 await websocket.send_text(word + " ")
                 await asyncio.sleep(0.02)
