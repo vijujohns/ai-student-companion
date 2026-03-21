@@ -7,6 +7,7 @@ from app.api.routes import router
 from app.api.websocket import websocket_router
 
 from app.modules.faiss_store import load_index, load_knowledge_base
+from app.modules.db import init_db
 
 import threading
 
@@ -23,3 +24,6 @@ def startup_event():
 
     print("🚀 Checking for KB updates...")
     threading.Thread(target=load_knowledge_base).start()
+
+    print("🚀 Initializing DB...")
+    init_db()

@@ -5,6 +5,7 @@ REST APIs
 from fastapi import APIRouter
 from app.modules.rag import generate_answer
 from app.modules.cache import get_cache, set_cache
+from app.modules.history import get_history
 
 router = APIRouter()
 
@@ -33,3 +34,7 @@ def incremental_reindex():
     from app.modules.faiss_store import load_knowledge_base
     load_knowledge_base()
     return {"status": "Incremental reindex completed"}
+
+@router.get("/history")
+def fetch_history(user_id: str, session_id: str):
+    return get_history(user_id, session_id)
