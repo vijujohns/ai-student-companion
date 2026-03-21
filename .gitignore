@@ -1,4 +1,4 @@
-*.pyo
-*.pyc
 __pycache__/
 .cache/
+*.pyo
+*.pyc

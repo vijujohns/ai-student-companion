@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+redis
+faiss-cpu
+sentence-transformers
+deep-translator
+python-jose
+pypdf
+python-docx
+tqdm
+llama-cpp-python

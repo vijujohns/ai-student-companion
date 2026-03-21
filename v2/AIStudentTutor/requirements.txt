@@ -1,0 +1,8 @@
+PyQt5
+pdfplumber
+sentence-transformers
+faiss-cpu
+torch
+transformers
+googletrans==4.0.0rc1
+Pillow
