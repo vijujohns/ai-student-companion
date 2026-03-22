@@ -1,33 +1,58 @@
 """
-Improved RAG orchestrator with Redis caching
+RAG (Retrieval-Augmented Generation) orchestrator with Redis caching
+and dynamic model selection.
+
+This module handles the full RAG pipeline:
+1. Fetch session-specific selected content (PDFs / notes)
+2. Check Redis cache for repeated queries
+3. Retrieve FAISS context relevant to the query
+4. Generate answer using the selected LLM (local or cloud)
+5. Store answer in cache
+6. Persist chat history
+
+Enhancement:
+- Supports selecting a specific model dynamically via `model_name`
+  using the unified Model Manager (local or cloud LLMs)
 """
 
-from app.modules.faiss_store import search
-from app.modules.llm import generate_response
-from app.modules.cache import get_cache, set_cache
-import hashlib
-from app.modules.history import save_chat
 import os
 import uuid
+import hashlib
+from app.modules.faiss_store import search
+from app.modules.cache import get_cache, set_cache
+from app.modules.history import save_chat, get_history
+from app.modules.db import get_connection
+
+# 🔹 Unified LLM interface (local + cloud)
+from app.modules.model_manager import generate_response
 
 
-def generate_answer(query: str, user_id="default", session_id=None) -> str:
+def generate_answer(
+    query: str,
+    user_id: str = "default",
+    session_id: str = None,
+    model_name: str = None
+) -> str:
     """
-    RAG pipeline with caching:
-    1. Check Redis cache
-    2. Retrieve context (FAISS + optional selected content)
-    3. Generate answer via LLM
-    4. Store in cache
-    5. Save chat
+    Main RAG function to generate answers with caching and optional model selection.
+
+    Parameters:
+    - query: User's question
+    - user_id: Unique identifier for the user
+    - session_id: Optional session identifier; auto-generated if missing
+    - model_name: Optional model name to use (local or cloud)
+
+    Returns:
+    - answer: Generated response string
     """
 
+    # Step 0: Ensure session ID exists
     if not session_id:
         session_id = f"{user_id}_default"
 
     print(f"User ID: {user_id}  Session ID: {session_id}")
 
-    # 🔥 Step 0: Fetch session_content if exists
-    from app.modules.db import get_connection
+    # Step 1: Fetch any session-specific content (PDFs, notes, etc.)
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -45,11 +70,11 @@ def generate_answer(query: str, user_id="default", session_id=None) -> str:
         from app.modules.ingestion import extract_text_from_pdf
         session_text = extract_text_from_pdf(session_content_path)
 
-    # 🔥 Step 1: Create cache key
-    key_raw = f"{user_id}:{session_id}:{query}"
+    # Step 2: Generate a cache key including model name
+    key_raw = f"{user_id}:{session_id}:{query}:{model_name}"
     key = hashlib.md5(key_raw.encode()).hexdigest()
 
-    # 🔥 Step 2: Check cache
+    # Step 3: Check Redis cache
     cached = get_cache(key)
     if cached:
         print("⚡ Cache HIT")
@@ -57,29 +82,34 @@ def generate_answer(query: str, user_id="default", session_id=None) -> str:
 
     print("❌ Cache MISS")
 
-    # 🔥 Step 3: Retrieve FAISS context
+    # Step 4: Retrieve FAISS context relevant to the query
     context_list = search(query)
     context = "\n".join(context_list)
 
-    # Prepend selected PDF/chapter/note content if available
+    # Include session-specific content at the top of context if available
     if session_text:
         context = f"[Selected Content Context]\n{session_text}\n\n{context}"
 
-    # 🔥 Step 4: Add history injection
-    from app.modules.history import get_history
-    history_data = get_history(user_id, session_id)[-5:]  # limit last 5 messages
+    # Step 5: Inject last 5 messages from session history
+    history_data = get_history(user_id, session_id)[-5:]  # last 5 exchanges
     history_text = ""
     for h in history_data:
         history_text += f"user: {h['question']}\n"
         history_text += f"assistant: {h['answer']}\n"
 
-    # 🔥 Step 5: Generate answer via LLM
-    answer = generate_response(context, query, history_text)
+    # Step 6: Generate answer using selected model (local or cloud)
+    # If model_name is None, default model is used (tinyllama-1.1b-chat)
+    answer = generate_response(
+        context=context,
+        query=query,
+        history=history_text,
+        model_name=model_name
+    )
 
-    # 🔥 Step 6: Store in cache
+    # Step 7: Store generated answer in Redis cache
     set_cache(key, {"answer": answer})
 
-    # 🔥 Step 7: Save chat
+    # Step 8: Persist chat history
     save_chat(user_id, session_id, query, answer)
 
     return answer

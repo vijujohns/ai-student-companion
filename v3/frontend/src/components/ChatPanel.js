@@ -2,6 +2,8 @@ import React, { useState, useEffect } from "react";
 import { sendMessage } from "../services/websocket";
 import VoiceControl from "./VoiceControl";
 import { speakText } from "../utils/speech";
+import { FiMenu, FiX } from "react-icons/fi";
+import "./ChatPanel.css";
 
 export default function ChatPanel() {
   const [input, setInput] = useState("");
@@ -12,13 +14,11 @@ export default function ChatPanel() {
   const [userId] = useState(localStorage.getItem("username") || "default");
   const [userRole, setUserRole] = useState(localStorage.getItem("role") || "user");
 
-  const [autoSpeak, setAutoSpeak] = useState(
-    localStorage.getItem("autoSpeak") === "true" || false
-  );
+  const [autoSpeak, setAutoSpeak] = useState(localStorage.getItem("autoSpeak") === "true");
 
   const [sessions, setSessions] = useState([]);
 
-  // 🔹 Knowledge Base States
+  // Knowledge Base
   const [classes, setClasses] = useState([]);
   const [selectedClass, setSelectedClass] = useState(null);
   const [subjects, setSubjects] = useState([]);
@@ -28,18 +28,18 @@ export default function ChatPanel() {
   const [contents, setContents] = useState([]);
   const [selectedContent, setSelectedContent] = useState(null);
 
-  // 🔹 PDF Blob URL
   const [pdfBlobUrl, setPdfBlobUrl] = useState(null);
+  const [showPdf, setShowPdf] = useState(true);
 
-  const handleVoice = (text) => setInput(text);
-
-  // Determine if current user is admin
-  const isAdmin = userRole === "admin";
+  const [drawerOpen, setDrawerOpen] = useState(true);
 
   const [adminRunning, setAdminRunning] = useState(false);
   const [adminMessage, setAdminMessage] = useState("");
 
-  // 🔐 LOGOUT
+  const handleVoice = (text) => setInput(text);
+
+  const isAdmin = userRole === "admin";
+
   const handleLogout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("session_id");
@@ -48,7 +48,7 @@ export default function ChatPanel() {
     window.location.reload();
   };
 
-  // ✅ LOAD SESSIONS
+  // Load sessions
   const loadSessions = async () => {
     const token = localStorage.getItem("token");
     if (!token) return;
@@ -64,7 +64,7 @@ export default function ChatPanel() {
     }
   };
 
-  // ✅ LOAD HISTORY
+  // Load chat history
   const loadHistory = async (session) => {
     const token = localStorage.getItem("token");
     if (!token || !session) return;
@@ -92,7 +92,6 @@ export default function ChatPanel() {
     loadClasses();
   }, []);
 
-  // ✅ NEW CHAT
   const handleNewChat = () => {
     const newSession = Date.now().toString();
     setSessionId(newSession);
@@ -101,20 +100,14 @@ export default function ChatPanel() {
     setSelectedContent(null);
   };
 
-  // ✅ SWITCH SESSION
   const switchSession = (sessionObj) => {
     const session = sessionObj.id;
     setSessionId(session);
     localStorage.setItem("session_id", session);
     loadHistory(session);
-    if (sessionObj.selected_content) {
-      setSelectedContent(sessionObj.selected_content);
-    } else {
-      setSelectedContent(null);
-    }
+    setSelectedContent(sessionObj.selected_content || null);
   };
 
-  // 🗑️ DELETE SESSION
   const deleteSession = async (sessionToDelete) => {
     const token = localStorage.getItem("token");
     try {
@@ -138,7 +131,6 @@ export default function ChatPanel() {
     }
   };
 
-  // ✏️ RENAME SESSION
   const renameSession = async (sessionObj) => {
     const newTitle = prompt("Rename chat:", sessionObj.title);
     if (!newTitle) return;
@@ -160,7 +152,7 @@ export default function ChatPanel() {
     }
   };
 
-  // 🔹 Knowledge Base Fetchers
+  // Knowledge Base loaders
   const loadClasses = async () => {
     try {
       const res = await fetch("http://127.0.0.1:8000/classes");
@@ -170,7 +162,6 @@ export default function ChatPanel() {
       console.error("❌ Failed to load classes:", err);
     }
   };
-
   const loadSubjects = async (cls) => {
     if (!cls) return;
     try {
@@ -183,7 +174,6 @@ export default function ChatPanel() {
       console.error("❌ Failed to load subjects:", err);
     }
   };
-
   const loadFolders = async (cls, subject) => {
     if (!cls || !subject) return;
     try {
@@ -196,7 +186,6 @@ export default function ChatPanel() {
       console.error("❌ Failed to load folders:", err);
     }
   };
-
   const loadContents = async (cls, subject, folder) => {
     if (!cls || !subject || !folder) return;
     try {
@@ -210,7 +199,7 @@ export default function ChatPanel() {
     }
   };
 
-  // 🔹 Load PDF securely using token
+  // PDF loader
   useEffect(() => {
     if (!selectedContent) {
       setPdfBlobUrl(null);
@@ -224,17 +213,13 @@ export default function ChatPanel() {
         if (!res.ok) throw new Error("Failed to load PDF");
         return res.blob();
       })
-      .then((blob) => {
-        const url = URL.createObjectURL(blob);
-        setPdfBlobUrl(url);
-      })
+      .then((blob) => setPdfBlobUrl(URL.createObjectURL(blob)))
       .catch((err) => {
         console.error("❌ PDF load failed:", err);
         setPdfBlobUrl(null);
       });
   }, [selectedContent]);
 
-  // ✅ SEND MESSAGE
   const handleSend = () => {
     if (!input) return;
     setMessages((prev) => [...prev, { type: "user", text: input }]);
@@ -283,15 +268,11 @@ export default function ChatPanel() {
     setTimeout(() => loadSessions(), 500);
   };
 
-  // 🔹 ADMIN FUNCTIONS
-  // 🔹 REINDEX HANDLER
   const handleReindex = async () => {
     const token = localStorage.getItem("token");
     if (!token) return alert("Token missing");
-
     setAdminRunning(true);
     setAdminMessage("Reindexing knowledge base...");
-
     try {
       const res = await fetch("http://127.0.0.1:8000/admin/reindex", {
         method: "POST",
@@ -299,22 +280,18 @@ export default function ChatPanel() {
       });
       const data = await res.json();
       setAdminMessage(data.status || "✅ Reindex completed!");
-    } catch (err) {
-      console.error("❌ Reindex failed:", err);
+    } catch {
       setAdminMessage("❌ Reindex failed");
     } finally {
       setAdminRunning(false);
     }
   };
 
-  // 🔹 INCREMENTAL REINDEX HANDLER
   const handleIncrementalReindex = async () => {
     const token = localStorage.getItem("token");
     if (!token) return alert("Token missing");
-
     setAdminRunning(true);
     setAdminMessage("Incremental reindexing...");
-
     try {
       const res = await fetch("http://127.0.0.1:8000/admin/reindex-incremental", {
         method: "POST",
@@ -322,8 +299,7 @@ export default function ChatPanel() {
       });
       const data = await res.json();
       setAdminMessage(data.status || "✅ Incremental reindex completed!");
-    } catch (err) {
-      console.error("❌ Incremental reindex failed:", err);
+    } catch {
       setAdminMessage("❌ Incremental reindex failed");
     } finally {
       setAdminRunning(false);
@@ -331,17 +307,18 @@ export default function ChatPanel() {
   };
 
   return (
-    <div style={{ display: "flex" }}>
-      {/* 🧭 SIDEBAR */}
-      <div style={{ width: "300px", borderRight: "1px solid #ccc", padding: "10px" }}>
-        <button onClick={handleLogout} style={{ marginBottom: "10px" }}>
-          🔓 Logout
+    <div className="chat-container">
+      {/* SIDEBAR / DRAWER */}
+      <div className={`sidebar ${drawerOpen ? "" : "closed"}`}>
+        <button onClick={() => setDrawerOpen(false)}>
+          <FiX size={24} />
         </button>
-        <div style={{ marginBottom: "10px", fontWeight: "bold" }}>
+        <button onClick={handleLogout}>🔓 Logout</button>
+        <div>
           User: {userId} ({userRole})
         </div>
         <button onClick={handleNewChat}>+ New Chat</button>
-        <div style={{ marginTop: "10px" }}>
+        <div>
           <label>
             <input
               type="checkbox"
@@ -357,139 +334,136 @@ export default function ChatPanel() {
           </label>
         </div>
 
-        {/* 🔹 Knowledge Base Navigation */}
-        <div style={{ marginTop: "10px" }}>
-          <h4>Knowledge Base</h4>
+        {/* Knowledge Base */}
+        <h4>Knowledge Base</h4>
+        <select
+          onChange={(e) => {
+            setSelectedClass(e.target.value);
+            setSelectedSubject(null);
+            setSelectedFolder(null);
+            setSelectedContent(null);
+            loadSubjects(e.target.value);
+          }}
+        >
+          <option value="">Select Class</option>
+          {classes.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
+
+        {subjects.length > 0 && (
           <select
             onChange={(e) => {
-              setSelectedClass(e.target.value);
-              setSelectedSubject(null);
+              setSelectedSubject(e.target.value);
               setSelectedFolder(null);
               setSelectedContent(null);
-              loadSubjects(e.target.value);
+              loadFolders(selectedClass, e.target.value);
             }}
           >
-            <option value="">Select Class</option>
-            {classes.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
+            <option value="">Select Subject</option>
+            {subjects.map((s) => (
+              <option key={s} value={s}>{s}</option>
             ))}
           </select>
+        )}
 
-          {subjects.length > 0 && (
-            <select
-              onChange={(e) => {
-                setSelectedSubject(e.target.value);
-                setSelectedFolder(null);
-                setSelectedContent(null);
-                loadFolders(selectedClass, e.target.value);
-              }}
-            >
-              <option value="">Select Subject</option>
-              {subjects.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          )}
+        {folders.length > 0 && (
+          <select
+            onChange={(e) => {
+              setSelectedFolder(e.target.value);
+              setSelectedContent(null);
+              loadContents(selectedClass, selectedSubject, e.target.value);
+            }}
+          >
+            <option value="">Select Folder</option>
+            {folders.map((f) => (
+              <option key={f} value={f}>{f}</option>
+            ))}
+          </select>
+        )}
 
-          {folders.length > 0 && (
-            <select
-              onChange={(e) => {
-                setSelectedFolder(e.target.value);
-                setSelectedContent(null);
-                loadContents(selectedClass, selectedSubject, e.target.value);
-              }}
-            >
-              <option value="">Select Folder</option>
-              {folders.map((f) => (
-                <option key={f} value={f}>
-                  {f}
-                </option>
-              ))}
-            </select>
-          )}
+        {contents.length > 0 && (
+          <select
+            onChange={(e) => setSelectedContent(e.target.value)}
+          >
+            <option value="">Select Content</option>
+            {contents.map((c) => (
+              <option key={c.path} value={c.path}>{c.title}</option>
+            ))}
+          </select>
+        )}
 
-          {contents.length > 0 && (
-            <select onChange={(e) => setSelectedContent(e.target.value)}>
-              <option value="">Select Content</option>
-              {contents.map((c) => (
-                <option key={c.path} value={c.path}>
-                  {c.title}
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
+        {/* Sessions */}
+        <h4>Sessions</h4>
+        {sessions.map((s) => (
+          <div
+            key={s.id}
+            className={`session-item ${s.id === sessionId ? "active" : ""}`}
+          >
+            <span onClick={() => switchSession(s)}>{s.title || "New Chat"}</span>
+            <button onClick={() => renameSession(s)}>✏️</button>
+            <button onClick={() => deleteSession(s)}>🗑️</button>
+          </div>
+        ))}
 
-        {/* 🔹 Sessions */}
-        <div style={{ marginTop: "20px" }}>
-          {sessions.map((s) => (
-            <div
-              key={s.id}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "5px",
-                background: s.id === sessionId ? "#ddd" : "transparent",
-              }}
-            >
-              <span onClick={() => switchSession(s)} style={{ cursor: "pointer", flex: 1 }}>
-                {s.title || "New Chat"}
-              </span>
-              <button onClick={() => renameSession(s)}>✏️</button>
-              <button onClick={() => deleteSession(s)}>🗑️</button>
-            </div>
-          ))}
-        </div>
-
-        {/* 🔹 Admin Panel */}
+        {/* Admin */}
         {isAdmin && (
-        <div style={{ marginTop: "20px", borderTop: "1px solid #aaa", paddingTop: "10px" }}>
-          <h4>Admin Panel</h4>
-          <button onClick={handleReindex} disabled={adminRunning}>🔄 Reindex Knowledge Base</button>
-          <button onClick={handleIncrementalReindex} disabled={adminRunning}>⚡ Incremental Reindex</button>
-
-          {/* 🔹 Simple visual feedback */}
-          {adminRunning && <div style={{ marginTop: "10px", color: "blue" }}>Processing...</div>}
-          {adminMessage && <div style={{ marginTop: "10px", color: adminRunning ? "blue" : "green" }}>{adminMessage}</div>}
-        </div>
+          <div className="admin-panel">
+            <h4>Admin Panel</h4>
+            <button onClick={handleReindex} disabled={adminRunning}>
+              🔄 Reindex KB
+            </button>
+            <button onClick={handleIncrementalReindex} disabled={adminRunning}>
+              ⚡ Incremental Reindex
+            </button>
+            {adminRunning && <div className="admin-message">Processing...</div>}
+            {adminMessage && <div className="admin-message">{adminMessage}</div>}
+          </div>
         )}
       </div>
 
-      {/* 💬 MAIN CHAT */}
-      <div style={{ flex: 1, padding: "10px" }}>
-        <VoiceControl onResult={handleVoice} />
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask something..."
-        />
-        <button onClick={handleSend}>Send</button>
+      {/* MAIN CHAT */}
+      <div className="main-chat">
+        <div className="chat-topbar">
+          {!drawerOpen && (
+            <button onClick={() => setDrawerOpen(true)}>
+              <FiMenu size={24} />
+            </button>
+          )}
+          <VoiceControl onResult={handleVoice} />
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Ask something..."
+          />
+          <button onClick={handleSend}>Send</button>
+        </div>
 
-        {/* 🔹 PDF Viewer */}
-        {pdfBlobUrl && (
-          <div style={{ marginTop: "20px", border: "1px solid #ccc", padding: "5px" }}>
-            <iframe src={pdfBlobUrl} style={{ width: "100%", height: "400px" }} />
-          </div>
-        )}
-
-        {/* 🔹 Chat Messages */}
-        <div style={{ marginTop: "20px" }}>
+        <div className="chat-messages">
           {messages.map((msg, i) => (
-            <div key={i}>
+            <div key={i} className={`message-bubble ${msg.type}`}>
               <b>{msg.type === "user" ? "You:" : "AI:"}</b> {msg.text}
             </div>
           ))}
           {currentStream && (
-            <div>
+            <div className="message-bubble ai">
               <b>AI:</b> {currentStream}
             </div>
           )}
         </div>
+
+        {/* PDF Viewer */}
+        {pdfBlobUrl && showPdf && (
+          <div className="pdf-viewer">
+            <button onClick={() => setShowPdf(false)}>Hide PDF</button>
+            <iframe src={pdfBlobUrl} />
+          </div>
+        )}
+        {!showPdf && pdfBlobUrl && (
+          <button onClick={() => setShowPdf(true)} className="pdf-viewer">
+            Show PDF
+          </button>
+        )}
       </div>
     </div>
   );

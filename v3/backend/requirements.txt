@@ -9,3 +9,4 @@ pypdf
 python-docx
 tqdm
 llama-cpp-python
+openai

@@ -1,5 +1,5 @@
 ﻿# Define the folder to search and the output file
-$FolderPath = "D:\GPT\ai-student-companion\v3\backend"
+$FolderPath = "D:\GPT\ai-student-companion\v3\knowledge_base"
 $OutputFile = "D:\GPT\ai-student-companion\AllFileContents.txt"
 
 
@@ -9,9 +9,9 @@ if (Test-Path $OutputFile) {
 }
 
 # Define folders and files to exclude (whole subtrees)
-$ExcludedFolders = @("node_modules", "models", "data", "__pycache__", ".git", "knowledge_base")
+$ExcludedFolders = @("node_modules", "models", "data", "__pycache__", ".git", "knowledge_base1")
 $ExcludedFiles   = @(".gitignore")
-$ExcludedExtensions = @(".svg", ".ico", ".png", ".jpg")
+$ExcludedExtensions = @(".svg", ".ico", ".png", ".jpg","*.pdf")
 
 # Counters and tracking
 $ProcessedCount = 0

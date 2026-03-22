@@ -2,22 +2,21 @@
 REST APIs
 """
 
-from fastapi import APIRouter
-from fastapi import Depends
+from fastapi import APIRouter, Depends
 from app.modules.rag import generate_answer
 from app.modules.cache import get_cache, set_cache
 from app.modules.history import get_history
 from app.modules.auth import authenticate_user, create_access_token
-from app.modules.dependencies import require_role
-from app.modules.dependencies import get_current_user
+from app.modules.dependencies import require_role, get_current_user
 import uuid
 from fastapi.responses import FileResponse
 from urllib.parse import unquote
 import os
-
+from app.modules.flashcards import router as flashcards_router
 
 router = APIRouter()
 
+router.include_router(flashcards_router)
 
 @router.post("/ask")
 def ask(q: dict, user=Depends(get_current_user)):
@@ -25,35 +24,30 @@ def ask(q: dict, user=Depends(get_current_user)):
     Protected Ask API
     - Requires JWT token
     - Supports session_id (optional)
-    - Uses existing cache logic
+    - Supports model selection via 'model_name' (optional)
+    - Uses Redis cache for faster responses
     """
 
     query = q["query"]
     session_id = q.get("session_id")
+    model_name = q.get("model_name")  # NEW: Optional model selection
 
     if not session_id:
         session_id = str(uuid.uuid4())
 
-    cached = get_cache(query)
-    if cached:
-        return {
-            "answer": cached,
-            "cached": True,
-            "session_id": session_id
-        }
-
+    # 🔹 Generate answer via RAG pipeline (handles caching internally)
     ans = generate_answer(
-        query,
+        query=query,
         user_id=user["username"],
-        session_id=session_id
+        session_id=session_id,
+        model_name=model_name  # Pass optional model selection
     )
-
-    set_cache(query, ans)
 
     return {
         "answer": ans,
-        "cached": False,
-        "session_id": session_id
+        "cached": False,  # generate_answer internally handles cache hits
+        "session_id": session_id,
+        "model_used": model_name if model_name else "default"
     }
 
 
@@ -96,7 +90,6 @@ def login(data: dict):
     }
 
 
-# ✅ UPDATED: Use session_title from DB
 @router.get("/sessions")
 def get_sessions(user=Depends(get_current_user)):
     """
@@ -149,9 +142,11 @@ def delete_session(session_id: str, user=Depends(get_current_user)):
     return {"status": "deleted"}
 
 
-# ✅ NEW: Persist rename
 @router.put("/sessions/{session_id}")
 def rename_session(session_id: str, data: dict, user=Depends(get_current_user)):
+    """
+    Persistently rename a session
+    """
     new_title = data.get("title")
 
     if not new_title:
@@ -192,6 +187,9 @@ def get_session_content(session_id: str, user=Depends(get_current_user)):
 
 @router.put("/sessions/{session_id}/content")
 def set_session_content(session_id: str, data: dict, user=Depends(get_current_user)):
+    """
+    Update session content path (PDF etc.)
+    """
     path = data.get("path")
     if not path:
         return {"error": "Content path required"}
@@ -214,6 +212,9 @@ def set_session_content(session_id: str, data: dict, user=Depends(get_current_us
 
 @router.get("/pdf")
 def serve_pdf(path: str, user=Depends(get_current_user)):
+    """
+    Serve PDF from knowledge base folder safely
+    """
     path = unquote(path)  # decode URL-encoded path
 
     # Security check: only serve from knowledge base
@@ -230,7 +231,7 @@ def serve_pdf(path: str, user=Depends(get_current_user)):
 @router.get("/classes")
 def get_classes():
     """
-    Return available classes.
+    Return available classes
     """
     KB_DIR = os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")), "knowledge_base")
     if not os.path.exists(KB_DIR):
@@ -241,7 +242,7 @@ def get_classes():
 @router.get("/subjects")
 def get_subjects(class_name: str):
     """
-    Return subjects for a given class.
+    Return subjects for a given class
     """
     KB_DIR = os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")), "knowledge_base")
     class_path = os.path.join(KB_DIR, class_name)
@@ -253,7 +254,7 @@ def get_subjects(class_name: str):
 @router.get("/folders")
 def get_folders(class_name: str, subject: str):
     """
-    Return folders for a given class and subject.
+    Return folders for a given class and subject
     """
     KB_DIR = os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")), "knowledge_base")
     subject_path = os.path.join(KB_DIR, class_name, subject)
@@ -265,7 +266,7 @@ def get_folders(class_name: str, subject: str):
 @router.get("/contents")
 def get_contents(class_name: str, subject: str, folder: str):
     """
-    Return contents (PDFs etc.) for a given class, subject, and folder.
+    Return contents (PDFs etc.) for a given class, subject, and folder
     """
     KB_DIR = os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")), "knowledge_base")
     folder_path = os.path.join(KB_DIR, class_name, subject, folder)
