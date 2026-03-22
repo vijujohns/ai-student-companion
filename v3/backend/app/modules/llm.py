@@ -17,13 +17,16 @@ llm = Llama(
 )
 
 
-def generate_response(context: str, query: str) -> str:
+def generate_response(context: str, query: str, history: str = "") -> str:
     """
     Generate answer using context + query
     """
 
     prompt = f"""
 You are an intelligent AI tutor.
+
+Conversation so far:
+{history}
 
 Use the context below to answer the question clearly and concisely.
 

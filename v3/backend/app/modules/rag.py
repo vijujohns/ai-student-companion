@@ -20,12 +20,13 @@ def generate_answer(query: str, user_id="default", session_id=None) -> str:
     """
 
     if not session_id:
-        session_id = str(uuid.uuid4())
-        
+        session_id = f"{user['username']}_default"
+
     print(f"User ID: {user_id}  Session ID: {session_id}")
 
     # 🔥 Step 1: Create cache key
-    key = hashlib.md5(query.encode()).hexdigest()
+    key_raw = f"{user_id}:{session_id}:{query}"
+    key = hashlib.md5(key_raw.encode()).hexdigest()
 
     # 🔥 Step 2: Check cache
     cached = get_cache(key)
@@ -39,10 +40,21 @@ def generate_answer(query: str, user_id="default", session_id=None) -> str:
         context_list = search(query)
         context = "\n".join(context_list)
 
-        # Step 4: Generate answer
-        answer = generate_response(context, query)
+        # Step 4 : Add history injection
+        from app.modules.history import get_history
 
-        # Step 5: Store in cache
+        history_data = get_history(user_id, session_id)
+        history_data = history_data[-5:]  # limit
+
+        history_text = ""
+        for h in history_data:
+            history_text += f"user: {h['question']}\n"
+            history_text += f"assistant: {h['answer']}\n"
+
+        # Step 5: Generate answer
+        answer = generate_response(context, query, history_text)
+        
+        # Step 6: Store in cache
         set_cache(key, {"answer": answer})
 
     # 🔥 Save chat

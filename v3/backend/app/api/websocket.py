@@ -34,10 +34,29 @@ async def websocket_ask(websocket: WebSocket):
 
     try:
         while True:
+            
+            import json
+
             data = await websocket.receive_text()
 
-            # Run LLM in thread (non-blocking)
-            answer = await asyncio.to_thread(generate_answer, data)
+            try:
+                payload = json.loads(data)
+                query = payload.get("query")
+                session_id = payload.get("session_id", "default")
+                user_id = payload.get("user_id", "default")
+            except:
+                # fallback for old clients
+                query = data
+                session_id = "default"
+                user_id = "default"
+
+            answer = await asyncio.to_thread(
+                generate_answer,
+                query,
+                user_id,
+                session_id
+            )
+
 
             words = answer.split()
             for word in words:
