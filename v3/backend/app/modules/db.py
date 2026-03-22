@@ -23,13 +23,9 @@ def get_connection():
 
 
 def init_db():
-    """
-    Initialize database tables
-    """
     conn = get_connection()
     cursor = conn.cursor()
 
-    # ✅ Main table (now includes session_title)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS chat_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38,18 +34,17 @@ def init_db():
         question TEXT,
         answer TEXT,
         timestamp TEXT,
-        session_title TEXT
+        session_title TEXT,
+        session_content TEXT
     )
     """)
 
-    # ✅ Backward compatibility: add column if DB already exists
+    # Backward compatibility: add column if missing
     try:
-        cursor.execute("ALTER TABLE chat_history ADD COLUMN session_title TEXT")
+        cursor.execute("ALTER TABLE chat_history ADD COLUMN session_content TEXT")
     except:
-        # Column already exists → ignore
         pass
 
     conn.commit()
     conn.close()
-
     print(f"✅ Database initialized at: {DB_FILE}")

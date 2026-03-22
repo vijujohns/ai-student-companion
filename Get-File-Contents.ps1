@@ -1,5 +1,5 @@
 ﻿# Define the folder to search and the output file
-$FolderPath = "D:\GPT\ai-student-companion\v3"
+$FolderPath = "D:\GPT\ai-student-companion\v3\backend"
 $OutputFile = "D:\GPT\ai-student-companion\AllFileContents.txt"
 
 
@@ -60,7 +60,7 @@ Get-ChildItem -Path $FolderPath -Recurse -File | ForEach-Object {
     $IncludedFiles += $FilePath
 
     # Write file path header to output file
-    Add-Content -Path $OutputFile -Value "===== $FilePath ====="
+    Add-Content -Path $OutputFile -Value "Contents of  $FilePath "
 
     try {
         # Read and append file contents

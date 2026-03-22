@@ -2,14 +2,22 @@
 Auth dependencies for protected routes
 """
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.modules.auth import verify_token
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)  # 🔹 do NOT auto-throw 403
 
+def get_current_user(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """
+    Returns the user payload from JWT token
+    """
+    # 🔹 Debug: print incoming headers
+    #print("Incoming request headers:", request.headers)
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Authorization header missing")
+
     token = credentials.credentials
     payload = verify_token(token)
 
