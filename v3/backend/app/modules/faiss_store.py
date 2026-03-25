@@ -40,22 +40,41 @@ def search(query, filter_path=None):
         return ["No documents available"]
 
     q = model.encode([query])
-    D, I = index.search(np.array(q), 3)
+    D, I = index.search(np.array(q), 8)
 
     results = []
 
-    for i in I[0]:
+    scored_results = []
+
+    for idx, i in enumerate(I[0]):
         if i < len(documents):
             doc = documents[i]
 
-            # 🔥 FILTER LOGIC
-            if filter_path:
-                if doc["source"] != filter_path:
-                    continue
+            if isinstance(doc, str):
+                text = doc
+                source = None
+            else:
+                text = doc.get("text", "")
+                source = doc.get("source")
 
-            results.append(doc["text"])
+            # 🔹 Apply filter
+            if filter_path and source != filter_path:
+                continue
 
-    # fallback if filter removes everything
+            # 🔥 Combine FAISS score + position score
+            distance_score = D[0][idx]
+            position_score = idx * 0.1  # earlier = better
+
+            final_score = distance_score + position_score
+
+            scored_results.append((final_score, text))
+
+    # 🔹 Sort by score (lower = better)
+    scored_results.sort(key=lambda x: x[0])
+
+    # 🔹 Take top 4 best chunks
+    results = [text for _, text in scored_results[:4]]
+
     if not results:
         return ["No relevant context found for selected content"]
 

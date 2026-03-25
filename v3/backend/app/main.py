@@ -11,6 +11,9 @@ from app.api.websocket import websocket_router
 from app.modules.faiss_store import load_index, load_knowledge_base
 from app.modules.db import init_db
 
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
+
 import threading
 
 app = FastAPI(title="AI Tutor")

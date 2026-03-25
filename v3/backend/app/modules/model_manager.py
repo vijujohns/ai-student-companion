@@ -29,6 +29,14 @@ LOCAL_MODELS = {
         "max_tokens": 300,
         "temperature": 0.7,
         "n_ctx": 2048
+    },
+    "mistral-7b": {
+        "type": "local",
+        "description": "Mistral 7B Instruct (CPU)",
+        "path": os.path.join(BASE_DIR, "backend/models/mistral-7b-instruct-v0.2.Q4_K_M.gguf"),
+        "max_tokens": 400,
+        "temperature": 0.3,
+        "n_ctx": 4096
     }
 }
 
@@ -68,7 +76,7 @@ def list_models() -> Dict:
 
 def get_default_model() -> Dict:
     """Return default model config (TinyLLaMA local)"""
-    return LOCAL_MODELS["tinyllama-1.1b-chat"]
+    return LOCAL_MODELS["mistral-7b"]
 
 
 def select_model(model_name: str) -> Dict:
@@ -82,13 +90,13 @@ def select_model(model_name: str) -> Dict:
 def generate_response(context: str, query: str, history: str = "", model_name: str = None) -> str:
     """
     Generate an answer using the selected model.
-    Supports both local LLMs (TinyLLaMA) and cloud LLMs (OpenAI / Azure).
+    Supports both local LLMs (mistral-7b/TinyLLaMA) and cloud LLMs (OpenAI / Azure).
 
     Args:
         context (str): The retrieved context from RAG or knowledge base
         query (str): User question
         history (str): Optional conversation history
-        model_name (str): Optional model selection, defaults to TinyLLaMA
+        model_name (str): Optional model selection, defaults to mistral-7b
 
     Returns:
         str: Generated answer
@@ -107,26 +115,40 @@ def generate_response(context: str, query: str, history: str = "", model_name: s
         )
 
         prompt = f"""
-You are an intelligent AI tutor.
+You are an AI tutor helping a student based ONLY on the provided study material.
 
-Conversation so far:
-{history}
+STRICT RULES (MUST FOLLOW):
+1. Answer ONLY using the provided context.
+2. Do NOT use outside knowledge if context exists.
+3. If the answer is NOT clearly available in the context:
+   Say EXACTLY:
+   "I could not find this in the provided study material."
+   Do NOT attempt to guess or generate an answer.
 
-Use the context below to answer the question clearly and concisely.
+4. Do NOT generate extra questions.
+5. Do NOT continue conversation.
+6. Give only ONE clear answer.
 
+FORMAT:
+- Keep answer simple and student-friendly.
+- Use short paragraphs or bullet points if helpful.
+
+---------------------
 Context:
 {context}
 
+---------------------
 Question:
 {query}
 
+---------------------
 Answer:
 """
         output = llm(
             prompt,
             max_tokens=model_config.get("max_tokens", 300),
             temperature=model_config.get("temperature", 0.7),
-            stop=["</s>"]
+            stop=["Question:", "---------------------", "</s>"]
         )
         return output["choices"][0]["text"].strip()
 
@@ -203,19 +225,33 @@ def generate_response_stream(context: str, query: str, history: str = "", model_
         llm = _llm_instance
 
         prompt = f"""
-You are an intelligent AI tutor.
+You are an AI tutor helping a student based ONLY on the provided study material.
 
-Conversation so far:
-{history}
+STRICT RULES (MUST FOLLOW):
+1. Answer ONLY using the provided context.
+2. Do NOT use outside knowledge if context exists.
+3. If the answer is NOT clearly available in the context:
+   Say EXACTLY:
+   "I could not find this in the provided study material."
+   Do NOT attempt to guess or generate an answer.
 
-Use the context below to answer the question clearly and concisely.
+4. Do NOT generate extra questions.
+5. Do NOT continue conversation.
+6. Give only ONE clear answer.
 
+FORMAT:
+- Keep answer simple and student-friendly.
+- Use short paragraphs or bullet points if helpful.
+
+---------------------
 Context:
 {context}
 
+---------------------
 Question:
 {query}
 
+---------------------
 Answer:
 """
 
@@ -224,7 +260,7 @@ Answer:
                 prompt,
                 max_tokens=model_config.get("max_tokens", 300),
                 temperature=model_config.get("temperature", 0.7),
-                stop=["</s>"],
+                stop=["Question:", "---------------------", "</s>"],
                 stream=True
             )
 

@@ -27,6 +27,21 @@ from app.modules.db import get_connection
 from app.modules.model_manager import generate_response
 
 
+def rank_chunks(query, chunks):
+    query_words = set(query.lower().split())
+
+    scored = []
+    for chunk in chunks:
+        chunk_words = set(chunk.lower().split())
+        score = len(query_words.intersection(chunk_words))
+        scored.append((score, chunk))
+
+    # Sort by score descending
+    scored.sort(reverse=True, key=lambda x: x[0])
+
+    return [c[1] for c in scored]
+
+
 def generate_answer(
     query: str,
     user_id: str = "default",
@@ -83,8 +98,46 @@ def generate_answer(
     print("❌ Cache MISS")
 
     # Step 4: Retrieve FAISS context relevant to the query
-    context_list = search(query, filter_path=session_content_path)
+    #context_list = search(query, filter_path=session_content_path)
+    # 🔥 Keep only most relevant 2 chunks (reduce confusion)
+    #context_list = context_list[:2]
+    
+
+    # 🔥 Step 5B: Enhanced query using last question
+    # 🔹 Get session history FIRST
+    history_data = get_history(user_id, session_id)[-3:]
+
+    last_question = ""
+    if len(history_data) > 0:
+        last_question = history_data[-1]['question']
+
+    # 🔥 Enhanced query
+    enhanced_query = query
+    if last_question and len(query) < 80:
+        enhanced_query = f"{query}. Context: {last_question}"
+        
+    print(f"\n🧠 Original Query: {query}")
+    print(f"🔄 Enhanced Query: {enhanced_query}")
+
+    context_list = search(enhanced_query, filter_path=session_content_path)
+
+    # 🔥 Rank chunks by relevance
+    context_list = rank_chunks(enhanced_query, context_list)
+
+    print(f"🎯 Top Chunks Selected: {len(context_list)}")
+
+    # 🔥 Keep only top 3
+    context_list = context_list[:3]
+
+
+    print(f"📚 Retrieved Chunks: {len(context_list)}")
+
+    for i, chunk in enumerate(context_list[:3]):  # limit to 3 for readability
+        print(f"\n--- Chunk {i+1} ---\n{chunk[:300]}...")
+
     context = "\n".join(context_list)
+
+    print(f"\n📦 Final Context Length: {len(context)} characters")
 
     # Include session-specific content at the top of context if available
     #if session_text:
@@ -105,6 +158,32 @@ def generate_answer(
         history=history_text,
         model_name=model_name
     )
+
+    # 🔥 SMART FALLBACK DETECTION
+    if any(x in answer.lower() for x in [
+    "could not find",
+    "not found in the context",
+    "not in the provided",
+    ]):
+        print("[FALLBACK] Using general knowledge")
+
+        fallback_prompt = f"""
+    You are a helpful AI tutor.
+
+    Answer the question clearly and correctly using your general knowledge.
+
+    Keep it simple and student-friendly.
+
+    Question:
+    {query}
+
+    Answer:
+    """
+
+    answer = generate_response("", fallback_prompt, "", model_name)
+    answer = "This answer is based on my general knowledge, not from your study material.\n\n" + answer
+
+    answer = clean_output(answer)
 
     # Step 7: Store generated answer in Redis cache
     set_cache(key, {"answer": answer})
@@ -143,12 +222,48 @@ def generate_answer_stream(query, user_id="default", session_id=None, model_name
     cached = get_cache(key)
     if cached:
         print("⚡ STREAM CACHE HIT")
-        yield cached["answer"]
+        for token in cached["answer"].split():
+            yield token + " "
         return
 
     # 🔹 Retrieve context (filtered)
-    context_list = search(query, filter_path=session_content_path)
+    #context_list = search(query, filter_path=session_content_path)
+    #context = "\n".join(context_list)
+
+    # 🔥 Step 5B: Enhanced query using last question
+    # 🔹 Get session history FIRST
+    history_data = get_history(user_id, session_id)[-3:]
+
+    last_question = ""
+    if len(history_data) > 0:
+        last_question = history_data[-1]['question']
+
+    # 🔥 Enhanced query
+    enhanced_query = query
+    if last_question and len(query) < 80:
+        enhanced_query = f"{query}. Context: {last_question}"
+        
+    print(f"\n🧠 Original Query: {query}")
+    print(f"🔄 Enhanced Query: {enhanced_query}")
+
+    context_list = search(enhanced_query, filter_path=session_content_path)
+
+    # 🔥 Rank chunks by relevance
+    context_list = rank_chunks(enhanced_query, context_list)
+
+    print(f"🎯 Top Chunks Selected: {len(context_list)}")
+
+    # 🔥 Keep only top 3
+    context_list = context_list[:3]
+
+    print(f"📚 Retrieved Chunks: {len(context_list)}")
+
+    for i, chunk in enumerate(context_list[:3]):  # limit to 3 for readability
+        print(f"\n--- Chunk {i+1} ---\n{chunk[:300]}...")
+
     context = "\n".join(context_list)
+
+    print(f"\n📦 Final Context Length: {len(context)} characters")
 
     # 🔹 History
     history_data = get_history(user_id, session_id)[-3:]
@@ -161,6 +276,74 @@ def generate_answer_stream(query, user_id="default", session_id=None, model_name
 
     full_response = ""
 
+    response_buffer = ""
+
     for token in generate_response_stream(context, query, history_text, model_name):
-        full_response += token
-        yield token
+        response_buffer += token
+
+    # 🔥 CHECK FALLBACK
+    if any(x in response_buffer.lower() for x in [
+    "could not find",
+    "not found in the context",
+    "not in the provided",
+    ]): 
+        print("[FALLBACK STREAM] Using general knowledge")
+
+        fallback_prompt = f"""
+    You are a helpful AI tutor.
+
+    Answer the question clearly and correctly using your general knowledge.
+
+    Keep it simple and student-friendly.
+
+    Question:
+    {query}
+
+    Answer:
+    """
+
+        full_response = ""
+        yield "This answer is based on my general knowledge, not from your study material.\n\n"
+
+        for token in generate_response_stream("", fallback_prompt, "", model_name):
+            full_response += token
+            yield token
+
+        set_cache(key, {"answer": full_response})
+        return
+
+    # 🔹 Normal case
+    full_response = response_buffer
+    for token in response_buffer.split():
+        yield token + " "
+
+    full_response = clean_output(full_response)
+
+    set_cache(key, {"answer": full_response})
+
+
+def clean_output(text):
+    # 🔥 Remove unwanted patterns
+    stop_markers = ["Question:", "Answer:", "User:", "assistant:", "Q:", "A:"]
+    for marker in stop_markers:
+        if marker in text:
+            text = text.split(marker)[0]
+
+    # 🔥 Remove repeated lines
+    lines = text.split("\n")
+    unique_lines = []
+    for line in lines:
+        line = line.strip()
+        if line and line not in unique_lines:
+            unique_lines.append(line)
+
+    text = " ".join(unique_lines)
+
+    # 🔥 Remove weird repetitions
+    words = text.split()
+    cleaned_words = []
+    for i, w in enumerate(words):
+        if i == 0 or w != words[i - 1]:
+            cleaned_words.append(w)
+
+    return " ".join(cleaned_words).strip()
