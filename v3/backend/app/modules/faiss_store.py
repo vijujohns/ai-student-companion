@@ -23,16 +23,19 @@ embedding_dim = model.get_sentence_embedding_dimension()
 
 # FAISS
 index = faiss.IndexFlatL2(embedding_dim)
-documents = []
+documents = []   # list of dicts: {text, source}
 
 
-def add_doc(text):
+def add_doc(text, source):
     vec = model.encode([text])
     index.add(np.array(vec))
-    documents.append(text)
+    documents.append({
+        "text": text,
+        "source": source
+    })
 
 
-def search(query):
+def search(query, filter_path=None):
     if len(documents) == 0:
         return ["No documents available"]
 
@@ -40,11 +43,23 @@ def search(query):
     D, I = index.search(np.array(q), 3)
 
     results = []
+
     for i in I[0]:
         if i < len(documents):
-            results.append(documents[i])
+            doc = documents[i]
 
-    return results if results else ["No relevant context found"]
+            # 🔥 FILTER LOGIC
+            if filter_path:
+                if doc["source"] != filter_path:
+                    continue
+
+            results.append(doc["text"])
+
+    # fallback if filter removes everything
+    if not results:
+        return ["No relevant context found for selected content"]
+
+    return results
 
 
 def load_metadata():

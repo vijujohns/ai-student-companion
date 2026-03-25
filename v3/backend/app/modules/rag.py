@@ -65,13 +65,13 @@ def generate_answer(
     session_content_path = row[0] if row else None
     conn.close()
 
-    session_text = ""
-    if session_content_path and os.path.exists(session_content_path):
-        from app.modules.ingestion import extract_text_from_pdf
-        session_text = extract_text_from_pdf(session_content_path)
+    #session_text = ""
+    #if session_content_path and os.path.exists(session_content_path):
+    #    from app.modules.ingestion import extract_text_from_pdf
+    #    session_text = extract_text_from_pdf(session_content_path)
 
     # Step 2: Generate a cache key including model name
-    key_raw = f"{user_id}:{session_id}:{query}:{model_name}"
+    key_raw = f"{user_id}:{session_id}:{query}:{model_name}:{session_content_path}"
     key = hashlib.md5(key_raw.encode()).hexdigest()
 
     # Step 3: Check Redis cache
@@ -83,15 +83,15 @@ def generate_answer(
     print("❌ Cache MISS")
 
     # Step 4: Retrieve FAISS context relevant to the query
-    context_list = search(query)
+    context_list = search(query, filter_path=session_content_path)
     context = "\n".join(context_list)
 
     # Include session-specific content at the top of context if available
-    if session_text:
-        context = f"[Selected Content Context]\n{session_text}\n\n{context}"
+    #if session_text:
+    #    context = f"[Selected Content Context]\n{session_text}\n\n{context}"
 
     # Step 5: Inject last 5 messages from session history
-    history_data = get_history(user_id, session_id)[-5:]  # last 5 exchanges
+    history_data = get_history(user_id, session_id)[-3:]  # last 3 exchanges
     history_text = ""
     for h in history_data:
         history_text += f"user: {h['question']}\n"
@@ -110,6 +110,57 @@ def generate_answer(
     set_cache(key, {"answer": answer})
 
     # Step 8: Persist chat history
-    save_chat(user_id, session_id, query, answer)
+    #save_chat(user_id, session_id, query, answer)
 
     return answer
+
+
+def generate_answer_stream(query, user_id="default", session_id=None, model_name=None):
+
+    if not session_id:
+        session_id = f"{user_id}_default"
+
+    # 🔹 Get session content path
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT session_content FROM chat_history
+        WHERE user_id=? AND session_id=?
+        ORDER BY id DESC LIMIT 1
+    """, (user_id, session_id))
+    row = cursor.fetchone()
+    session_content_path = row[0] if row else None
+    conn.close()
+
+
+
+    import hashlib
+    from app.modules.cache import get_cache, set_cache
+
+    key_raw = f"{user_id}:{session_id}:{query}:{model_name}:{session_content_path}"
+    key = hashlib.md5(key_raw.encode()).hexdigest()
+
+    cached = get_cache(key)
+    if cached:
+        print("⚡ STREAM CACHE HIT")
+        yield cached["answer"]
+        return
+
+    # 🔹 Retrieve context (filtered)
+    context_list = search(query, filter_path=session_content_path)
+    context = "\n".join(context_list)
+
+    # 🔹 History
+    history_data = get_history(user_id, session_id)[-3:]
+    history_text = ""
+    for h in history_data:
+        history_text += f"user: {h['question']}\nassistant: {h['answer']}\n"
+
+    # 🔹 STREAM FROM MODEL
+    from app.modules.model_manager import generate_response_stream
+
+    full_response = ""
+
+    for token in generate_response_stream(context, query, history_text, model_name):
+        full_response += token
+        yield token

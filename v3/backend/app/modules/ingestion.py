@@ -50,6 +50,6 @@ def ingest_pdf(file_path):
     chunks = chunk_text(text)
 
     for chunk in chunks:
-        add_doc(chunk)
+        add_doc(chunk, source=file_path)
 
     print(f"Ingested {len(chunks)} chunks successfully")

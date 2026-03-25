@@ -64,20 +64,25 @@ async def websocket_ask(websocket: WebSocket):
                 model_name = None
 
             # 🔹 Generate answer using RAG pipeline in a thread
-            answer = await asyncio.to_thread(
-                generate_answer,
+            from app.modules.rag import generate_answer_stream
+
+            stream = generate_answer_stream(
                 query=query,
                 user_id=user_id,
                 session_id=session_id,
                 model_name=model_name
             )
 
-            # 🔹 Stream response word by word with slight delay
-            for word in answer.split():
-                await websocket.send_text(word + " ")
-                await asyncio.sleep(0.02)
+            full_response = ""
 
-            # 🔹 Indicate end of message
+            for token in stream:
+                full_response += token
+                await websocket.send_text(token)
+
+            # 🔹 Save full response AFTER streaming
+            from app.modules.history import save_chat
+            save_chat(user_id, session_id, query, full_response)
+
             await websocket.send_text("[END]")
 
     except WebSocketDisconnect:

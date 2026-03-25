@@ -181,3 +181,67 @@ Answer:
 
     else:
         raise ValueError(f"Unsupported model type: {model_config['type']}")
+
+
+def generate_response_stream(context: str, query: str, history: str = "", model_name: str = None):
+    model_config = select_model(model_name) if model_name else get_default_model()
+
+    # ---------------- Local LLaMA Streaming ----------------
+    if model_config["type"] == "local":
+        from llama_cpp import Llama
+
+        # 🔥 IMPORTANT: reuse model (singleton pattern)
+        global _llm_instance
+        if "_llm_instance" not in globals():
+            _llm_instance = Llama(
+                model_path=model_config["path"],
+                n_ctx=model_config.get("n_ctx", 2048),
+                n_threads=4,
+                verbose=False
+            )
+
+        llm = _llm_instance
+
+        prompt = f"""
+You are an intelligent AI tutor.
+
+Conversation so far:
+{history}
+
+Use the context below to answer the question clearly and concisely.
+
+Context:
+{context}
+
+Question:
+{query}
+
+Answer:
+"""
+
+        try:
+            stream = llm(
+                prompt,
+                max_tokens=model_config.get("max_tokens", 300),
+                temperature=model_config.get("temperature", 0.7),
+                stop=["</s>"],
+                stream=True
+            )
+
+            for chunk in stream:
+                if "choices" in chunk:
+                    token = chunk["choices"][0].get("text", "")
+                    if token:
+                        yield token
+
+        except Exception as e:
+            yield f"\n[ERROR: {str(e)}]\n"
+
+    # ---------------- Cloud Streaming (Fallback to non-stream) ----------------
+    elif model_config["type"] == "cloud":
+        # ⚠️ For now fallback to full response (streaming later phase)
+        response = generate_response(context, query, history, model_name)
+        yield response
+
+    else:
+        yield "[ERROR: Unsupported model]"
