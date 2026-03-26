@@ -8,6 +8,11 @@ export function sendMessage(message, onMessage) {
     ? `ws://127.0.0.1:8000/ws/ask?token=${token}`
     : `ws://127.0.0.1:8000/ws/ask`;
 
+
+  if (ws) {
+    ws.close();
+  }
+  
   ws = new WebSocket(url);
 
   ws.onopen = () => {
@@ -27,7 +32,26 @@ export function sendMessage(message, onMessage) {
   };
 
   ws.onmessage = (event) => {
-    onMessage(event.data);
+    try {
+      const msg = JSON.parse(event.data);
+
+      if (msg.type === "chunk") {
+        onMessage(msg.data);
+      }
+
+      if (msg.type === "end") {
+        onMessage("__END__");  // 🔥 unify signal
+      }
+      
+      if (msg.type === "error") {
+        console.error("❌ Server Error:", msg.data);
+        onMessage("__END__");
+      }
+
+    } catch (err) {
+      // fallback for old plain text responses
+      onMessage(event.data);
+    }
   };
 
   ws.onerror = (error) => {
@@ -37,4 +61,12 @@ export function sendMessage(message, onMessage) {
   ws.onclose = () => {
     console.log("🔌 WebSocket Closed");
   };
+}
+
+export function closeSocket() {
+  if (ws) {
+    ws.close();
+    ws = null;
+    console.log("🛑 WebSocket manually closed");
+  }
 }

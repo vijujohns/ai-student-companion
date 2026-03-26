@@ -5,6 +5,7 @@
   background-color: #1e1e1e;
   color: #fff;
   font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  overflow: hidden;
 }
 
 /* ------------------ SIDEBAR / DRAWER ------------------ */
@@ -54,8 +55,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 5px;
-  margin-bottom: 5px;
+  margin-bottom: 2px;
   border-radius: 4px;
   cursor: pointer;
 }
@@ -63,6 +63,98 @@
 .session-item.active {
   background-color: #444;
 }
+
+
+.session-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.session-row:hover {
+  background-color: #2f2f2f;
+}
+
+.session-row span {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  white-space: nowrap;       /* 🔥 single line */
+  overflow: hidden;          /* 🔥 hide overflow */
+  text-overflow: ellipsis;   /* 🔥 add ... */
+
+  max-width: 180px;          /* 🔥 controls truncation width */
+}
+
+.session-row span:hover::after {
+  content: attr(title);
+  position: absolute;
+  left: 0;
+  top: 120%;
+  background: #222;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.session-actions {
+  display: flex;
+  gap: 10px;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 0.15s ease-in-out;
+  flex-shrink: 0;
+}
+
+.session-row:hover .session-actions {
+  opacity: 1;
+}
+
+.session-actions svg {
+  margin-left: 8px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.session-actions svg:hover {
+  opacity: 1;
+}
+
+
+.session-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Icon should NEVER shrink */
+.session-icon {
+  flex-shrink: 0;
+}
+
+/* Text should truncate properly */
+.session-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+
+
 
 /* Admin panel */
 .admin-panel {
@@ -91,6 +183,15 @@
   flex: 1;
   display: flex;
   flex-direction: column;
+  height: 100vh;
+  background-color: #121212;
+  align-items: stretch;   /* ✅ FIX */
+}
+
+.chat-inner {
+  width: 100%;
+  max-width: 800px;
+  margin: 0 auto;
 }
 
 /* Top bar */
@@ -113,29 +214,35 @@
 }
 
 /* Chat messages */
-.chat-messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 10px;
-  background: #1e1e1e;
+.message-bubble {
+  width: 100%;
+  max-width: 70%;   /* 🔥 key for ChatGPT look */
+  padding: 12px 16px;
+  margin: 8px 0;
+  border-radius: 12px;
+  line-height: 1.5;
+  font-size: 14px;
 }
 
 .message-bubble {
-  max-width: 80%;
-  margin-bottom: 10px;
-  padding: 10px;
-  border-radius: 8px;
+  animation: fadeIn 0.2s ease-in;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .message-bubble.user {
-  background-color: #3a3a3a;
+  background-color: #2f2f2f;
   align-self: flex-end;
 }
 
 .message-bubble.ai {
-  background-color: #2a2a2a;
+  background-color: #1e1e1e;
   align-self: flex-start;
 }
+
 
 /* ------------------ PDF VIEWER ------------------ */
 .pdf-viewer {
@@ -157,4 +264,212 @@
   width: 100%;
   height: 400px;
   border: none;
+}
+
+.cursor {
+  display: inline-block;
+  margin-left: 2px;
+  animation: blink 1s infinite;
+}
+
+@keyframes blink {
+  0%, 50%, 100% { opacity: 1; }
+  25%, 75% { opacity: 0; }
+}
+
+.thinking .dots::after {
+  content: "";
+  animation: dots 1.5s infinite;
+}
+
+@keyframes dots {
+  0% { content: ""; }
+  33% { content: "."; }
+  66% { content: ".."; }
+  100% { content: "..."; }
+}
+
+/* ---------------- CHATGPT STYLE LAYOUT ---------------- */
+
+.chat-layout {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;   /* 🔥 prevents overflow gap */
+}
+
+.chat-section {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* Center messages like ChatGPT */
+
+.chat-messages {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  overflow-y: auto;
+  padding: 20px;
+  padding-bottom: 80px;
+}
+
+/* Message row */
+.message-row {
+  width: 100%;
+  display: flex;
+  margin-bottom: 10px;
+}
+
+.message-row.user {
+  justify-content: flex-end;
+}
+
+.message-row.ai {
+  justify-content: flex-start;
+}
+
+/* ChatGPT bubble style */
+.message-row .message-bubble {
+  max-width: 70%;
+  padding: 14px 18px;
+  border-radius: 18px;
+  font-size: 15px;
+  line-height: 1.6;
+  background-color: #2a2a2a;
+}
+
+/* User bubble */
+.message-row.user .message-bubble {
+  background-color: #343541;
+}
+
+/* AI bubble */
+.message-row.ai .message-bubble {
+  background-color: #444654;
+}
+
+/* PDF RIGHT PANEL */
+
+.pdf-side {
+  position: relative;
+  min-width: 200px;
+  max-width: 80%;
+  border-left: 1px solid #333;
+  background: #111;
+  display: flex;
+  flex-direction: column;
+}
+
+.pdf-side iframe {
+  flex: 1;
+  border: none;
+}
+
+
+.resize-handle {
+  width: 5px;
+  cursor: col-resize;
+  background: #444;
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+}
+
+/* 🔥 Common action buttons (Stop / Show / Speak etc.) */
+.action-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: #444;
+  border: none;
+  color: #fff;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.action-btn:hover {
+  background: #555;
+}
+
+/* Special styling for Stop */
+.stop-btn {
+  background: #aa3333;
+}
+
+.stop-btn:hover {
+  background: #cc4444;
+}
+
+
+/* ---------------- INPUT BAR (ChatGPT style) ---------------- */
+
+.chat-input-container {
+  position: sticky;
+  bottom: 0;
+  width: 100%;
+  max-width: 800px;        /* 🔥 match chat width */
+  margin: 0 auto 10px auto;          /* 🔥 center it */
+  padding: 12px;
+  background: #121212;
+  display: flex;
+  justify-content: center;
+  border-top: 1px solid #333;
+  border-radius: 12px;
+}
+
+.chat-input-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 800px;
+  background: #2a2a2a;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid #3a3a3a;
+}
+
+.chat-input-box:focus-within {
+  border-color: #565869;
+  box-shadow: 0 0 0 1px #565869;
+}
+
+.chat-input-box textarea {
+  flex: 1;
+  resize: none;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #fff;
+  font-size: 15px;
+  max-height: 150px;
+  overflow-y: auto;
+  line-height: 1.5;
+}
+
+.chat-input-box button {
+  background: #565869;
+  border: none;
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.chat-input-box button:hover {
+  background: #6b6d80;
+}
+
+.stop-btn {
+  background: #aa3333;
 }

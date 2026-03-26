@@ -9,6 +9,11 @@ import json
 
 websocket_router = APIRouter()
 
+async def stream_generator(stream):
+    for token in stream:
+        yield token
+        await asyncio.sleep(0)  # 🔥 yield control
+
 
 @websocket_router.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
@@ -75,15 +80,26 @@ async def websocket_ask(websocket: WebSocket):
 
             full_response = ""
 
-            for token in stream:
+            async for token in stream_generator(stream):
+                await websocket.send_text(json.dumps({
+                    "type": "chunk",
+                    "data": token
+                }))
                 full_response += token
-                await websocket.send_text(token)
+                await asyncio.sleep(0.01)
 
             # 🔹 Save full response AFTER streaming
             from app.modules.history import save_chat
             save_chat(user_id, session_id, query, full_response)
 
-            await websocket.send_text("[END]")
+            await websocket.send_text(json.dumps({"type": "end"}))
 
     except WebSocketDisconnect:
         print("⚠️ Client disconnected")
+
+    except Exception as e:
+        print(f"❌ WebSocket Error: {e}")
+        await websocket.send_text(json.dumps({
+            "type": "error",
+            "data": str(e)
+        }))

@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from "react";
-import { sendMessage } from "../services/websocket";
+import { sendMessage, closeSocket } from "../services/websocket";
 import VoiceControl from "./VoiceControl";
 import { speakText } from "../utils/speech";
-import { FiMenu, FiX } from "react-icons/fi";
+import { FiMenu, FiX, FiMessageSquare, FiTrash2, FiEdit, FiFileText } from "react-icons/fi";
 import "./ChatPanel.css";
 
 export default function ChatPanel() {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState([]);
   const [currentStream, setCurrentStream] = useState("");
+  const [isStreaming, setIsStreaming] = useState(false);
 
   const [sessionId, setSessionId] = useState(localStorage.getItem("session_id") || null);
   const [userId] = useState(localStorage.getItem("username") || "default");
@@ -36,7 +37,16 @@ export default function ChatPanel() {
   const [adminRunning, setAdminRunning] = useState(false);
   const [adminMessage, setAdminMessage] = useState("");
 
+  const [pdfWidth, setPdfWidth] = useState(
+    Number(localStorage.getItem("pdfWidth")) || 50
+  );
+
   const handleVoice = (text) => setInput(text);
+
+  const messagesEndRef = React.useRef(null);
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, currentStream]);
 
   const isAdmin = userRole === "admin";
 
@@ -224,7 +234,9 @@ export default function ChatPanel() {
     if (!input) return;
     setMessages((prev) => [...prev, { type: "user", text: input }]);
     let fullResponse = "";
+    let buffer = "";
     setCurrentStream("");
+    setIsStreaming(true);
     let currentSession = sessionId;
     if (!currentSession) {
       currentSession = Date.now().toString();
@@ -240,14 +252,30 @@ export default function ChatPanel() {
         context_id: selectedContent,
       },
       (token) => {
-        if (token === "[END]") {
+        if (token === "__END__") {
+          // 🔥 Flush remaining buffer
+          if (buffer) {
+            fullResponse += buffer;
+            buffer = "";
+          }
+
           setMessages((prev) => [...prev, { type: "ai", text: fullResponse }]);
+
           if (autoSpeak && fullResponse) speakText(fullResponse);
+
           setCurrentStream("");
+          setIsStreaming(false);
           return;
         }
-        fullResponse += token;
-        setCurrentStream(fullResponse);
+
+        buffer += token;
+
+        // 🔥 flush on word boundary
+        if (buffer.includes(" ") || buffer.length > 15) {
+          fullResponse += buffer;
+          setCurrentStream(fullResponse);
+          buffer = "";
+        }
       }
     );
 
@@ -400,9 +428,22 @@ export default function ChatPanel() {
             key={s.id}
             className={`session-item ${s.id === sessionId ? "active" : ""}`}
           >
-            <span onClick={() => switchSession(s)}>{s.title || "New Chat"}</span>
-            <button onClick={() => renameSession(s)}>✏️</button>
-            <button onClick={() => deleteSession(s)}>🗑️</button>
+            <div className="session-row">
+              <span
+                className="session-title"
+                onClick={() => switchSession(s)}
+                title={s.title || "New Chat"}
+              >
+                <FiMessageSquare className="session-icon" size={14} />
+                <span className="session-text">
+                  {s.title || "New Chat"}
+                </span>
+              </span>
+              <div className="session-actions">
+                <FiEdit onClick={() => renameSession(s)} />
+                <FiTrash2 onClick={() => deleteSession(s)} />
+              </div>
+            </div>
           </div>
         ))}
 
@@ -424,46 +465,147 @@ export default function ChatPanel() {
 
       {/* MAIN CHAT */}
       <div className="main-chat">
-        <div className="chat-topbar">
-          {!drawerOpen && (
-            <button onClick={() => setDrawerOpen(true)}>
-              <FiMenu size={24} />
-            </button>
-          )}
-          <VoiceControl onResult={handleVoice} />
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask something..."
-          />
-          <button onClick={handleSend}>Send</button>
-        </div>
+        <div className="chat-layout">
 
-        <div className="chat-messages">
-          {messages.map((msg, i) => (
-            <div key={i} className={`message-bubble ${msg.type}`}>
-              <b>{msg.type === "user" ? "You:" : "AI:"}</b> {msg.text}
-            </div>
-          ))}
-          {currentStream && (
-            <div className="message-bubble ai">
-              <b>AI:</b> {currentStream}
-            </div>
-          )}
-        </div>
+          {/* CHAT SECTION */}
+          <div className="chat-section">
 
-        {/* PDF Viewer */}
-        {pdfBlobUrl && showPdf && (
-          <div className="pdf-viewer">
-            <button onClick={() => setShowPdf(false)}>Hide PDF</button>
-            <iframe src={pdfBlobUrl} />
+            <div className="chat-messages">
+              <div className="chat-inner">
+                {messages.map((msg, i) => (
+                  <div key={i} className={`message-row ${msg.type}`}>
+                    <div className="message-bubble">
+                      {msg.text}
+                    </div>
+                  </div>
+                ))}
+
+                {isStreaming && (
+                  <div className="message-row ai">
+                    <div className="message-bubble">
+                      {currentStream ? (
+                        <>
+                          {currentStream}
+                          <span className="cursor">▌</span>
+                        </>
+                      ) : (
+                        <span className="thinking">
+                          Thinking<span className="dots"></span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div ref={messagesEndRef} />
+              </div>
+            </div>
+
+            <div className="chat-input-container">
+              
+              <div className="chat-input-box">
+                
+                <VoiceControl onResult={handleVoice} />
+
+                <textarea
+                  disabled={isStreaming}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+
+                  onInput={(e) => {
+                    e.target.style.height = "auto";
+                    e.target.style.height = e.target.scrollHeight + "px";
+                  }}
+
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey && !isStreaming) {
+                      e.preventDefault();
+                      e.stopPropagation();     // 🔥 CRITICAL FIX (prevents mic trigger)
+                      handleSend();
+                    }
+                  }}
+
+                  placeholder="Message AI Tutor..."
+                  rows={1}
+                />
+
+                <button onClick={handleSend} disabled={isStreaming}>
+                  ➤
+                </button>
+
+                {isStreaming && (
+                  <button
+                    className="action-btn stop-btn"
+                    onClick={() => {
+                      closeSocket();
+                      setIsStreaming(false);
+                      setCurrentStream("");
+                    }}
+                  >
+                    Stop
+                  </button>
+                )}
+
+                {pdfBlobUrl && (
+                  <button
+                    className="action-btn"
+                    onClick={() => setShowPdf((prev) => !prev)}
+                  >
+                    {showPdf ? "Hide" : "Show"} <FiFileText size={14} />
+                  </button>
+                )}
+
+              </div>
+            </div>
+
           </div>
-        )}
-        {!showPdf && pdfBlobUrl && (
-          <button onClick={() => setShowPdf(true)} className="pdf-viewer">
-            Show PDF
-          </button>
-        )}
+          
+
+          {/* PDF RIGHT PANEL */}
+          {pdfBlobUrl && showPdf && (
+            <div
+              className="pdf-side"
+              style={{ width: `${pdfWidth}%` }}
+            >
+              {/* Resize handle */}
+              <div
+                className="resize-handle"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+
+                  const startX = e.clientX;
+                  const startWidth = pdfWidth;
+
+                  let latestWidth = startWidth;   // ✅ shared variable
+
+                  const onMouseMove = (moveEvent) => {
+                    const delta = startX - moveEvent.clientX;
+
+                    const newWidth = Math.min(
+                      80,
+                      Math.max(20, startWidth + (delta / window.innerWidth) * 100)
+                    );
+
+                    latestWidth = newWidth;   // ✅ store latest
+                    setPdfWidth(newWidth);
+                  };
+
+                  const onMouseUp = () => {
+                    localStorage.setItem("pdfWidth", latestWidth);  // ✅ FIXED
+                    window.removeEventListener("mousemove", onMouseMove);
+                    window.removeEventListener("mouseup", onMouseUp);
+                  };
+
+                  window.addEventListener("mousemove", onMouseMove);
+                  window.addEventListener("mouseup", onMouseUp);
+                }}
+              />
+              
+              <iframe src={pdfBlobUrl} />
+            </div>
+          )}
+
+        </div>
       </div>
     </div>
   );
