@@ -1,7 +1,114 @@
+# =============================================================================
+# AI Student Companion — Master .gitignore
+# One file at repo root covers the entire monorepo.
+# Sub-.gitignore: v3/backend/models/.gitignore kept intentionally
+#   (uses * + !.gitignore to track the empty dir without model binaries).
+# =============================================================================
+
+# -------------------------
+# Python
+# -------------------------
 __pycache__/
-.cache/
-node_modules
+*.py[cod]
 *.pyo
-*.pyc
+*.pyd
+*.egg-info/
+.eggs/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+
+# -------------------------
+# Virtual Environment
+# -------------------------
+.venv/
+venv/
+env/
+ENV/
+
+# -------------------------
+# Testing
+# -------------------------
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+*.cover
+v3/frontend/test-results/
+v3/frontend/playwright-report/
+
+# -------------------------
+# Environment / Secrets  ← NEVER commit these
+# -------------------------
+.env
+.env.local
+.env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# -------------------------
+# Node / Frontend
+# -------------------------
+node_modules/
+v3/frontend/dist/
+v3/frontend/build/
+v3/frontend/coverage/
+.pnp.js
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# -------------------------
+# LLM Model Files  ← large binaries, download separately
+# -------------------------
+*.gguf
+*.safetensors
+
+# -------------------------
+# PDFs  ← knowledge_base content, add your own locally
+# -------------------------
 *.pdf
+
+# -------------------------
+# User Uploads  ← runtime data, not source
+# -------------------------
+v3/app/uploads/*
+!v3/app/uploads/.gitkeep
+
+# -------------------------
+# Runtime-generated Data  ← FAISS index, SQLite DB, caches
+# -------------------------
+v3/data/faiss.index
+v3/data/documents.pkl
+v3/data/app.db
+v3/data/metadata.json
+v3/data/pdf_summaries.json
+
+# -------------------------
+# Logs  ← ignores log files and log dir contents at any depth
+# -------------------------
+*.log
+logs/*
+!logs/.gitkeep
+!**/logs/.gitkeep
+
+# -------------------------
+# General Caches
+# -------------------------
+.cache/
+*.cache
+
+# -------------------------
+# OS / Editor Noise
+# -------------------------
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# -------------------------
+# Misc Project-specific
+# -------------------------
 AllFileContents.txt

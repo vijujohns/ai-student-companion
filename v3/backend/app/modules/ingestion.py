@@ -89,7 +89,7 @@ def summarize_pdf(text, pdf_path, model_name=None):
     4. Final summary
     """
 
-    from app.modules.model_manager import generate_response
+    from .model_manager import generate_response
 
     # 🔹 Step 1: medium chunks (NOT FAISS chunks)
     summary_chunks = chunk_text(text, chunk_size=1500, overlap=200)
@@ -152,7 +152,7 @@ def ingest_pdf(file_path, model_name=None):
     3. Chunk text
     4. Add to FAISS
     """
-    from app.modules.faiss_store import add_doc
+    from .faiss_store import add_doc
 
     print(f"Ingesting: {file_path}")
 
@@ -176,7 +176,7 @@ def safe_summarize(text, pdf_path, model_name=None, chunk_index=None):
     """
     Summarize text safely within model context window.
     """
-    from app.modules.model_manager import generate_response
+    from .model_manager import generate_response
 
     max_chunk_len = 1500
     text_chunks = [text[i:i+max_chunk_len] for i in range(0, len(text), max_chunk_len)]
@@ -192,7 +192,7 @@ def safe_summarize(text, pdf_path, model_name=None, chunk_index=None):
 
 
 def combine_summaries(summaries, model_name=None):
-    from app.modules.model_manager import generate_response
+    from .model_manager import generate_response
 
     batch_size = 3   # 🔥 SAFE SIZE
 

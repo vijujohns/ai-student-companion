@@ -1,0 +1,70 @@
+{
+  "default_model": "mistral-7b",
+
+  "network": {
+    "backend": {
+      "bind_host": "0.0.0.0",
+      "public_host": "",
+      "port": 8000,
+      "protocol": "http",
+      "ws_protocol": "ws"
+    },
+    "redis": {
+      "host": "localhost",
+      "port": 6379
+    },
+    "frontend": {
+      "host": "0.0.0.0",
+      "port": 3000,
+      "preview_port": 4173
+    },
+    "testing": {
+      "host": "127.0.0.1",
+      "frontend_port": 4174,
+      "backend_port": 8011
+    },
+    "cors": {
+      "origins": [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000"
+      ],
+      "origin_regex": "^https?://([a-zA-Z0-9.-]+)(:\\d+)?$"
+    }
+  },
+
+  "tasks": {
+    "qa": "mistral-7b",
+    "summary": "tinyllama-1.1b-chat",
+    "flashcards": "mistral-7b",
+    "quiz": "mistral-7b"
+  },
+
+  "models": {
+    "tinyllama-1.1b-chat": {
+      "type": "local",
+      "path": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+      "max_tokens": 300,
+      "temperature": 0.7,
+      "n_ctx": 2048
+    },
+    "mistral-7b": {
+      "type": "local",
+      "path": "models/mistral-7b-instruct-v0.2.Q4_K_M.gguf",
+      "max_tokens": 400,
+      "temperature": 0.3,
+      "n_ctx": 4096
+    },
+    "gpt-3.5-turbo": {
+      "type": "cloud",
+      "provider": "openai",
+      "model_name": "gpt-3.5-turbo",
+      "max_tokens": 500,
+      "temperature": 0.7
+    }
+  },
+
+  "rag": {
+    "top_k": 4,
+    "strict_mode": true
+  }
+}

@@ -1,19 +1,13 @@
 """
-Handles JWT authentication and RBAC
+Compatibility wrapper for legacy imports.
+
+Use app.modules.auth for all new code.
 """
 
-from datetime import datetime, timedelta
-import jwt
+from ..modules.auth import create_access_token as _create_access_token
+from ..modules.auth import verify_token
 
-SECRET = "SECRET_KEY"
 
 def create_token(user_id, role):
-    payload = {
-        "user_id": user_id,
-        "role": role,
-        "exp": datetime.utcnow() + timedelta(hours=10)
-    }
-    return jwt.encode(payload, SECRET, algorithm="HS256")
-
-def verify_token(token):
-    return jwt.decode(token, SECRET, algorithms=["HS256"])
+    """Backward-compatible token factory used by older scripts."""
+    return _create_access_token({"username": user_id, "role": role})

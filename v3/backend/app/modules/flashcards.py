@@ -2,11 +2,13 @@
 import os
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends
+from ..modules.dependencies import require_quota
 from pydantic import BaseModel
-from app.modules.model_manager import get_default_model, generate_response
-from app.modules.db import get_connection
-#from app.modules.history import save_flashcards
-from app.modules.ingestion import extract_text_from_pdf
+from .model_manager import generate_response
+from .db import get_connection
+from .policy import increment_usage
+#from .history import save_flashcards
+from .ingestion import extract_text_from_pdf
 
 router = APIRouter(prefix="/flashcards", tags=["flashcards"])
 
@@ -30,10 +32,16 @@ class FlashcardResponse(BaseModel):
 def resolve_files(base_path: str, req: FlashcardRequest) -> List[str]:
     """
     Resolve the files based on class, subject, content_type, and optional chapter.
+    Validates each component to prevent path traversal attacks.
     """
-    path = os.path.join(base_path, req.class_name, req.subject, req.content_type)
+    for component in (req.class_name, req.subject, req.content_type):
+        if not component or ".." in component or any(c in component for c in ("/", "\\")):
+            raise HTTPException(status_code=400, detail="Invalid path component")
+    path = os.path.abspath(os.path.join(base_path, req.class_name, req.subject, req.content_type))
+    if not path.startswith(os.path.abspath(base_path) + os.sep):
+        raise HTTPException(status_code=400, detail="Invalid path component")
     if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail=f"No content found at {path}")
+        raise HTTPException(status_code=404, detail="No content found")
 
     files = []
     for f in os.listdir(path):
@@ -60,13 +68,13 @@ def generate_flashcards_from_text(text: str, num_cards: int) -> List[FlashcardIt
     """
     Generate flashcards using the default LLM.
     """
-    model = get_default_model()
+    # Cap context to keep prompt fast on the local model (~600 tokens)
+    capped = text[:2400].strip()
     prompt = (
-        f"Generate {num_cards} concise question-answer flashcards from the following text.\n\n"
-        f"{text}\n\n"
-        "Format: Q1: ... A1: ... Q2: ... A2: ..."
+        f"Generate {num_cards} concise question-answer flashcards from the provided context. "
+        "Use exactly this format: Q1: ... A1: ... Q2: ... A2: ..."
     )
-    response = generate_response(model, prompt)
+    response = generate_response(context=capped, query=prompt, task="flashcards")
     
     # Parse the output into flashcards
     flashcards = []
@@ -83,19 +91,36 @@ def generate_flashcards_from_text(text: str, num_cards: int) -> List[FlashcardIt
             q, a = None, None
     return flashcards
 
+def _save_flashcards_to_db(session_id: str, flashcards: List[FlashcardItem]):
+    """Persist flashcards to DB for a given session."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    for card in flashcards:
+        cursor.execute(
+            "INSERT INTO flashcards (session_id, question, answer) VALUES (?, ?, ?)",
+            (session_id, card.question, card.answer)
+        )
+    conn.commit()
+    conn.close()
+
+
 # ---------- API Endpoint ----------
 @router.post("/", response_model=FlashcardResponse)
-async def generate_flashcards(req: FlashcardRequest):
-    base_path = os.path.abspath("knowledge_base")
-    files = resolve_files(base_path, req)
+async def generate_flashcards(req: FlashcardRequest, user=Depends(require_quota("flashcard"))):
+    """Generate flashcards — requires authentication."""
+    BASE_KB = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../knowledge_base"))
+    files = resolve_files(BASE_KB, req)
     if not files:
         raise HTTPException(status_code=404, detail="No matching files found for flashcard generation.")
 
     text = extract_text_from_files(files)
     flashcards = generate_flashcards_from_text(text, req.num_cards or 10)
+    increment_usage(user["username"], "flashcard")
 
-    # Save flashcards in SQLite linked to session_id
     if req.session_id:
-        save_flashcards(req.session_id, flashcards)
+        try:
+            _save_flashcards_to_db(req.session_id, flashcards)
+        except Exception:
+            pass  # non-fatal: still return flashcards even if save fails
 
     return FlashcardResponse(flashcards=flashcards)

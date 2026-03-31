@@ -2,7 +2,7 @@
 Chat history module
 """
 
-from app.modules.db import get_connection
+from .db import get_connection
 from datetime import datetime
 
 
@@ -10,35 +10,44 @@ def save_chat(user_id, session_id, question, answer):
     conn = get_connection()
     cursor = conn.cursor()
 
-    # 🔥 Check if session already has a title
+    # Check if this exact (user, session, question) already has a row
     cursor.execute("""
-    SELECT session_title FROM chat_history
-    WHERE user_id=? AND session_id=?
+    SELECT id, session_title FROM chat_history
+    WHERE user_id=? AND session_id=? AND question=?
+    ORDER BY id DESC
     LIMIT 1
-    """, (user_id, session_id))
+    """, (user_id, session_id, question))
 
-    row = cursor.fetchone()
+    existing = cursor.fetchone()
 
-    if row and row[0]:
-        # Existing session → reuse title
-        session_title = row[0]
+    if existing:
+        # Update the answer in place — no duplicate rows
+        cursor.execute("""
+        UPDATE chat_history SET answer=?, timestamp=?
+        WHERE id=?
+        """, (answer, datetime.now().isoformat(), existing[0]))
     else:
-        # First message → create title from question
-        session_title = question[:40]
+        # First time saving this question — check for a session title to reuse
+        cursor.execute("""
+        SELECT session_title FROM chat_history
+        WHERE user_id=? AND session_id=?
+        LIMIT 1
+        """, (user_id, session_id))
+        title_row = cursor.fetchone()
+        session_title = (title_row[0] if title_row and title_row[0] else question[:40])
 
-    # ✅ Insert with session_title (backward compatible)
-    cursor.execute("""
-    INSERT INTO chat_history 
-    (user_id, session_id, question, answer, timestamp, session_title)
-    VALUES (?, ?, ?, ?, ?, ?)
-    """, (
-        user_id,
-        session_id,
-        question,
-        answer,
-        datetime.now().isoformat(),
-        session_title
-    ))
+        cursor.execute("""
+        INSERT INTO chat_history
+        (user_id, session_id, question, answer, timestamp, session_title)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            user_id,
+            session_id,
+            question,
+            answer,
+            datetime.now().isoformat(),
+            session_title
+        ))
 
     conn.commit()
     conn.close()

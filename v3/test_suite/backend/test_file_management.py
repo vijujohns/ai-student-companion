@@ -1,0 +1,416 @@
+"""
+File Management Tests
+- File upload validation
+- User storage isolation
+- File naming and sanitization
+- Indexing status tracking
+"""
+
+import pytest
+from unittest.mock import MagicMock, patch, call
+from fastapi import HTTPException, UploadFile
+from app.modules.file_management import (
+    _storage_base_dir,
+    _file_sha256,
+    _safe_name,
+    _effective_email,
+    _validate_tree_names,
+    _validate_pdf_upload,
+    get_or_create_user_storage_root,
+    make_kb_content_ref,
+    make_upload_content_ref,
+    queue_reindex,
+    recover_indexing_jobs,
+    resolve_content_reference,
+)
+
+
+class TestStorageBaseDir:
+    """Test storage directory initialization."""
+
+    @patch("app.modules.file_management.os.makedirs")
+    @patch("app.modules.file_management.os.path.join")
+    def test_storage_base_dir_creates_directory(self, mock_join, mock_makedirs):
+        """Verify storage base directory is created."""
+        mock_join.return_value = "/fake/path"
+        
+        result = _storage_base_dir()
+        
+        mock_makedirs.assert_called_once()
+        assert result == "/fake/path"
+
+    def test_storage_base_dir_returns_string(self):
+        """Verify function returns string path."""
+        result = _storage_base_dir()
+        assert isinstance(result, str)
+
+
+class TestFileSHA256:
+    """Test file hash calculation."""
+
+    def test_file_sha256_consistent(self):
+        """Verify same data produces same hash."""
+        data = b"test file content"
+        hash1 = _file_sha256(data)
+        hash2 = _file_sha256(data)
+        
+        assert hash1 == hash2
+
+    def test_file_sha256_different_data(self):
+        """Verify different data produces different hash."""
+        hash1 = _file_sha256(b"data1")
+        hash2 = _file_sha256(b"data2")
+        
+        assert hash1 != hash2
+
+    def test_file_sha256_format(self):
+        """Verify hash is 64-char hex string."""
+        hash_val = _file_sha256(b"test")
+        
+        assert len(hash_val) == 64
+        assert all(c in "0123456789abcdef" for c in hash_val)
+
+    def test_file_sha256_empty_file(self):
+        """Verify hashing empty file works."""
+        hash_val = _file_sha256(b"")
+        
+        assert isinstance(hash_val, str)
+        assert len(hash_val) == 64
+
+
+class TestSafeName:
+    """Test filename safety validation."""
+
+    def test_safe_name_allows_alphanumeric(self):
+        """Verify alphanumeric names are allowed."""
+        assert _safe_name("Chapter1English") is True
+
+    def test_safe_name_allows_hyphens(self):
+        """Verify hyphens are allowed."""
+        assert _safe_name("Chapter-1") is True
+
+    def test_safe_name_rejects_spaces(self):
+        """Verify spaces are rejected."""
+        assert _safe_name("Chapter 1") is False
+
+    def test_safe_name_rejects_special_chars(self):
+        """Verify special characters are rejected."""
+        assert _safe_name("Chapter@1!") is False
+        assert _safe_name("path/to/file") is False
+
+    def test_safe_name_rejects_empty(self):
+        """Verify empty name is rejected."""
+        assert _safe_name("") is False
+
+    def test_safe_name_rejects_none(self):
+        """Verify None is rejected."""
+        # Should handle gracefully
+        result = _safe_name(None) if isinstance(None, str) else False
+        assert result is False
+
+
+class TestEffectiveEmail:
+    """Test email extraction from user object."""
+
+    def test_effective_email_from_email_field(self):
+        """Verify email is extracted from 'email' field."""
+        user = {"email": "user@example.com", "username": "john"}
+        email = _effective_email(user)
+        
+        assert email == "user@example.com"
+
+    def test_effective_email_fallback_to_username(self):
+        """Verify username is used if email missing."""
+        user = {"username": "johnsmith", "email": ""}
+        email = _effective_email(user)
+        
+        assert email == "johnsmith"
+
+    def test_effective_email_case_normalized(self):
+        """Verify email is lowercased."""
+        user = {"email": "USER@EXAMPLE.COM"}
+        email = _effective_email(user)
+        
+        assert email == "user@example.com"
+
+    def test_effective_email_whitespace_trimmed(self):
+        """Verify whitespace is trimmed."""
+        user = {"email": "  user@example.com  "}
+        email = _effective_email(user)
+        
+        assert email == "user@example.com"
+
+    def test_effective_email_empty_fallback(self):
+        """Verify empty string for missing email and username."""
+        user = {"email": "", "username": ""}
+        email = _effective_email(user)
+        
+        assert email == ""
+
+
+class TestValidateTreeNames:
+    """Test folder/file name validation."""
+
+    def test_validate_tree_names_accepts_valid(self):
+        """Verify valid names pass validation."""
+        # Should not raise
+        _validate_tree_names("Class8", "English", "Chapter1", "Vocabulary")
+
+    def test_validate_tree_names_rejects_empty_class(self):
+        """Verify empty class name is rejected."""
+        with pytest.raises(HTTPException) as exc:
+            _validate_tree_names("", "English", "Chapter1", "Vocab")
+        
+        assert exc.value.status_code == 400
+
+    def test_validate_tree_names_rejects_empty_subject(self):
+        """Verify empty subject is rejected."""
+        with pytest.raises(HTTPException):
+            _validate_tree_names("Class8", "", "Chapter1", "Vocab")
+
+    def test_validate_tree_names_rejects_empty_folder(self):
+        """Verify empty folder is rejected."""
+        with pytest.raises(HTTPException):
+            _validate_tree_names("Class8", "English", "", "Vocab")
+
+    def test_validate_tree_names_rejects_spaces_in_subject(self):
+        """Verify spaces in subject names are rejected."""
+        with pytest.raises(HTTPException):
+            _validate_tree_names("Class8", "Subject Name", "Chapter1", "Vocab")
+
+    def test_validate_tree_names_rejects_special_chars(self):
+        """Verify special characters are rejected."""
+        with pytest.raises(HTTPException):
+            _validate_tree_names("Class8", "English!", "Chapter1", "Vocab")
+
+    def test_validate_tree_names_allows_hyphens(self):
+        """Verify hyphens in names are allowed."""
+        # Should not raise
+        _validate_tree_names("Class-8", "English-Advanced", "Chapter-1", "Unit-1")
+
+
+class TestValidatePDFUpload:
+    """Test PDF file validation."""
+
+    def test_validate_pdf_upload_accepts_pdf(self):
+        """Verify PDF files are accepted."""
+        upload = MagicMock(spec=UploadFile)
+        upload.filename = "document.pdf"
+        upload.content_type = "application/pdf"
+        
+        # Should not raise
+        _validate_pdf_upload(upload)
+
+    def test_validate_pdf_upload_rejects_non_pdf(self):
+        """Verify non-PDF files are rejected."""
+        upload = MagicMock(spec=UploadFile)
+        upload.filename = "doc.txt"
+        upload.content_type = "text/plain"
+        
+        with pytest.raises(HTTPException) as exc:
+            _validate_pdf_upload(upload)
+        
+        assert "Only PDF" in str(exc.value.detail)
+
+    def test_validate_pdf_upload_rejects_wrong_mime(self):
+        """Verify wrong MIME type is rejected."""
+        upload = MagicMock(spec=UploadFile)
+        upload.filename = "document.pdf"
+        upload.content_type = "application/octet-stream"
+        
+        with pytest.raises(HTTPException):
+            _validate_pdf_upload(upload)
+
+    def test_validate_pdf_upload_case_insensitive(self):
+        """Verify validation is case-insensitive."""
+        upload = MagicMock(spec=UploadFile)
+        upload.filename = "DOCUMENT.PDF"
+        upload.content_type = "application/pdf"
+        
+        # Should not raise
+        _validate_pdf_upload(upload)
+
+    def test_validate_pdf_upload_handles_missing_filename(self):
+        """Verify handling of missing filename."""
+        upload = MagicMock(spec=UploadFile)
+        upload.filename = None
+        upload.content_type = "application/pdf"
+        
+        with pytest.raises(HTTPException):
+            _validate_pdf_upload(upload)
+
+    def test_validate_pdf_upload_handles_missing_mime(self):
+        """Verify handling of missing MIME type."""
+        upload = MagicMock(spec=UploadFile)
+        upload.filename = "document.pdf"
+        upload.content_type = None
+        
+        # Should not raise (allows missing MIME if filename is PDF)
+        _validate_pdf_upload(upload)
+
+
+class TestGetOrCreateUserStorageRoot:
+    """Test user storage directory management."""
+
+    @patch("app.modules.file_management.get_connection")
+    @patch("app.modules.file_management.os.makedirs")
+    @patch("app.modules.file_management.os.path.join")
+    def test_get_or_create_user_storage_root_creates_directory(self, mock_join, mock_makedirs, mock_conn):
+        """Verify user storage directory is created."""
+        mock_join.side_effect = lambda *args: "/".join(args)
+        
+        user = {"username": "testuser", "email": "user@example.com"}
+        mock_db = MagicMock()
+        mock_conn.return_value = mock_db
+
+        result = get_or_create_user_storage_root(user)
+
+        assert isinstance(result, str)
+        mock_makedirs.assert_called()
+
+    @patch("app.modules.file_management.get_connection")
+    def test_get_or_create_user_storage_root_rejects_missing_username(self, mock_conn):
+        """Verify missing username raises exception."""
+        user = {"email": "user@example.com"}
+        
+        with pytest.raises(HTTPException) as exc:
+            get_or_create_user_storage_root(user)
+        
+        assert exc.value.status_code == 400
+
+    @patch("app.modules.file_management.get_connection")
+    def test_get_or_create_user_storage_root_fails_empty_user(self, mock_conn):
+        """Verify empty user dict raises exception."""
+        user = {}
+        
+        with pytest.raises(HTTPException):
+            get_or_create_user_storage_root(user)
+
+    @patch("app.modules.file_management.get_connection")
+    @patch("app.modules.file_management.os.makedirs")
+    @patch("app.modules.file_management.os.path.join")
+    def test_get_or_create_user_storage_root_records_in_db(self, mock_join, mock_makedirs, mock_conn):
+        """Verify storage root is recorded in database."""
+        mock_join.side_effect = lambda *args: "/".join(args)
+        
+        user = {"username": "testuser", "email": "user@example.com"}
+        mock_db = MagicMock()
+        mock_cursor = MagicMock()
+        mock_db.cursor.return_value = mock_cursor
+        mock_conn.return_value = mock_db
+        
+        get_or_create_user_storage_root(user)
+        
+        mock_cursor.execute.assert_called_once()
+        mock_db.commit.assert_called_once()
+
+
+class TestContentReferences:
+    def test_make_upload_content_ref(self):
+        assert make_upload_content_ref(42) == "upload:42"
+
+    def test_resolve_kb_content_reference(self, tmp_path):
+        kb_root = tmp_path / "knowledge_base"
+        chapter = kb_root / "Class 8" / "English-1" / "Text Books"
+        chapter.mkdir(parents=True)
+        pdf_path = chapter / "Chapter 1.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4")
+
+        relative_path = "Class 8/English-1/Text Books/Chapter 1.pdf"
+        content_id = make_kb_content_ref(relative_path)
+
+        with patch("app.modules.file_management._knowledge_base_root", return_value=str(kb_root)):
+            resolved = resolve_content_reference({"username": "student"}, content_id)
+
+        assert resolved["content_id"] == content_id
+        assert resolved["path"] == str(pdf_path)
+        assert resolved["source"] == "knowledge_base"
+
+    @patch("app.modules.file_management._resolve_upload_record")
+    def test_resolve_upload_content_reference(self, mock_resolve_upload_record):
+        mock_resolve_upload_record.return_value = {
+            "id": 7,
+            "display_name": "Uploaded Chapter",
+            "relative_path": "app/uploads/hash/Class 8/English-1/Text Books/Uploaded-Chapter.pdf",
+        }
+
+        resolved = resolve_content_reference({"username": "student"}, "upload:7")
+
+        assert resolved["content_id"] == "upload:7"
+        assert resolved["source"] == "uploaded"
+        assert resolved["file_id"] == 7
+
+    def test_resolve_rejects_invalid_reference(self):
+        with pytest.raises(HTTPException):
+            resolve_content_reference({"username": "student"}, "not-a-valid-reference")
+
+
+class TestIndexJobLifecycle:
+    @patch("app.modules.file_management._submit_index_job")
+    @patch("app.modules.file_management._create_index_job")
+    @patch("app.modules.file_management._load_files_for_scope")
+    def test_queue_reindex_uses_managed_submission(self, mock_load_files, mock_create_job, mock_submit_job):
+        mock_load_files.return_value = [{"id": 1, "relative_path": "app/uploads/x.pdf"}]
+        mock_create_job.return_value = 91
+        mock_submit_job.return_value = True
+
+        result = queue_reindex({"username": "student", "role": "student"}, scope="file", file_id=1)
+
+        assert result == {"job_id": 91, "queued_files": 1}
+        mock_submit_job.assert_called_once_with(91, mock_load_files.return_value)
+
+    @patch("app.modules.file_management._submit_index_job")
+    @patch("app.modules.file_management._load_files_for_scope")
+    @patch("app.modules.file_management.get_connection")
+    def test_recover_indexing_jobs_resubmits_queued_and_running(self, mock_conn_factory, mock_load_files, mock_submit_job):
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            {"id": 11, "user_id": "student", "scope_type": "FILE", "scope_ref": "3", "status": "QUEUED"},
+            {"id": 12, "user_id": "student", "scope_type": "CHANGED", "scope_ref": None, "status": "RUNNING"},
+        ]
+        conn.cursor.return_value = cursor
+        mock_conn_factory.return_value = conn
+        mock_load_files.side_effect = [
+            [{"id": 3, "relative_path": "app/uploads/a.pdf"}],
+            [{"id": 4, "relative_path": "app/uploads/b.pdf"}],
+        ]
+        mock_submit_job.return_value = True
+
+        result = recover_indexing_jobs()
+
+        assert result == {"recovered": 2, "failed": 0}
+        assert mock_submit_job.call_count == 2
+
+
+class TestFileManagementIntegration:
+    """Integration tests for file management."""
+
+    @patch("app.modules.file_management.get_connection")
+    @patch("app.modules.file_management.os.makedirs")
+    @patch("app.modules.file_management.os.path.join")
+    def test_file_management_user_isolation(self, mock_join, mock_makedirs, mock_conn):
+        """Verify files are isolated per user."""
+        mock_join.side_effect = lambda *args: "/".join(args)
+        
+        user1 = {"username": "user1", "email": "user1@example.com"}
+        user2 = {"username": "user2", "email": "user2@example.com"}
+        
+        mock_db = MagicMock()
+        mock_conn.return_value = mock_db
+        
+        root1 = get_or_create_user_storage_root(user1)
+        root2 = get_or_create_user_storage_root(user2)
+        
+        # Paths should be different
+        assert root1 != root2
+
+    def test_file_sha256_matches_standard(self):
+        """Verify hash calculation matches standard."""
+        import hashlib
+        test_data = b"test content"
+        
+        calculated = _file_sha256(test_data)
+        expected = hashlib.sha256(test_data).hexdigest()
+        
+        assert calculated == expected

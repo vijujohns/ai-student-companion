@@ -1,0 +1,29 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^python run_tests\\.py$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "npm run build": true,
+        "npm run test:e2e": true,
+        "npx playwright": true,
+        "&": true,
+        "d:/GPT/ai-student-companion/.venv/Scripts/python.exe": true,
+        "Get-NetTCPConnection": true,
+        "Push-Location": true,
+        "Pop-Location": true,
+        "npm run test": true,
+        "/^cd d:\\\\GPT\\\\ai-student-companion\\\\v3\\\\backend ; python -m pytest tests/test_websocket\\.py tests/test_rag\\.py tests/test_file_management\\.py -v --tb=short 2>&1 \\| tail -150$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python -m pytest tests/test_websocket\\.py tests/test_rag\\.py tests/test_file_management\\.py -v --tb=short$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python -m pytest tests/test_websocket\\.py tests/test_rag\\.py tests/test_file_management\\.py -v 2>&1 \\| Select-Object -Last 100$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

@@ -35,12 +35,53 @@ def add_doc(text, source):
     })
 
 
-def search(query, filter_path=None):
+def _rebuild_index_from_documents():
+    """Rebuild FAISS index from in-memory documents list."""
+    global index
+    index = faiss.IndexFlatL2(embedding_dim)
+    if not documents:
+        return
+
+    texts = []
+    for doc in documents:
+        if isinstance(doc, dict):
+            text = doc.get("text", "")
+        else:
+            text = str(doc)
+        texts.append(text or "")
+
+    if texts:
+        vectors = model.encode(texts)
+        index.add(np.array(vectors))
+
+
+def _remove_docs_for_source(source_path: str):
+    """Drop all chunks for a source file and rebuild index."""
+    global documents
+    if not source_path:
+        return
+    before = len(documents)
+    documents = [
+        d for d in documents
+        if not (isinstance(d, dict) and d.get("source") == source_path)
+    ]
+    if len(documents) != before:
+        _rebuild_index_from_documents()
+
+
+def _reset_store():
+    """Clear all in-memory vectors and documents for a full rebuild."""
+    global documents
+    documents = []
+    _rebuild_index_from_documents()
+
+
+def search(query, filter_path=None, top_k=4, search_k=8):
     if len(documents) == 0:
         return ["No documents available"]
 
     q = model.encode([query])
-    D, I = index.search(np.array(q), 8)
+    D, I = index.search(np.array(q), max(search_k, top_k))
 
     results = []
 
@@ -72,8 +113,8 @@ def search(query, filter_path=None):
     # 🔹 Sort by score (lower = better)
     scored_results.sort(key=lambda x: x[0])
 
-    # 🔹 Take top 4 best chunks
-    results = [text for _, text in scored_results[:4]]
+    # 🔹 Take top-k best chunks
+    results = [text for _, text in scored_results[:top_k]]
 
     if not results:
         return ["No relevant context found for selected content"]
@@ -120,8 +161,8 @@ def load_index():
         print("⚠️ No existing index found")
 
 
-def load_knowledge_base():
-    from app.modules.ingestion import ingest_pdf  # ✅ lazy import
+def load_knowledge_base(force_reindex=False):
+    from .ingestion import ingest_pdf  # ✅ lazy import
 
     kb_path = os.path.join(BASE_DIR, "knowledge_base")
 
@@ -132,21 +173,37 @@ def load_knowledge_base():
     print(f"📂 Scanning KB: {kb_path}")
 
     metadata = load_metadata()
+    if force_reindex:
+        print("♻️ Starting full reindex")
+        _reset_store()
+        metadata = {}
+
     updated_meta = {}
+
+    current_pdf_paths = set()
 
     for root, _, files in os.walk(kb_path):
         for file in files:
             if file.lower().endswith(".pdf"):
                 full_path = os.path.join(root, file)
+                current_pdf_paths.add(full_path)
 
                 last_modified = os.path.getmtime(full_path)
                 updated_meta[full_path] = last_modified
 
-                if full_path not in metadata or metadata[full_path] != last_modified:
+                if force_reindex or full_path not in metadata or metadata[full_path] != last_modified:
                     print(f"🔄 Re-indexing: {file}")
+                    _remove_docs_for_source(full_path)
                     ingest_pdf(full_path)
+
+    # Remove deleted PDFs from the in-memory index during incremental updates.
+    if not force_reindex:
+        deleted = set(metadata.keys()) - current_pdf_paths
+        for path in deleted:
+            _remove_docs_for_source(path)
 
     save_metadata(updated_meta)
     save_index()
 
-    print("✅ Knowledge base updated")
+    mode = "full" if force_reindex else "incremental"
+    print(f"✅ Knowledge base updated ({mode})")
