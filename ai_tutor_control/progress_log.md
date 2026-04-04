@@ -38,6 +38,13 @@
 - Approval received from user; Step 4 closed without starting Step 5.
 
 ## Step 5
+- Date: 2026-04-04
+- Status: Completed after user approval.
+- Confirmed Step 5 as the active step and kept `execution_plan.md` at `IN PROGRESS` until approval.
+- Defined a new modular backend/frontend structure aligned with the approved architecture.
+- Added an old-to-new mapping so the upgrade can proceed without ambiguity or breaking moves.
+- Saved the structure plan in `ai_tutor_control/architecture.md`.
+- Approval received from user; Step 5 closed without starting Step 6.
 
 ## Step 6
 

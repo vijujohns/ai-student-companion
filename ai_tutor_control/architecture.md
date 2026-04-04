@@ -554,3 +554,174 @@ For each phase:
 
 ### Step 4 Conclusion
 The safest plan is a **compatibility-first, additive rollout**: add scaffolding first, insert thin orchestration layers second, and only then move specialized behavior behind them. No breaking changes are planned in the refactor sequence. Approval is required before Step 4 can be marked completed or before moving to Step 5.
+
+## Step 5 - Folder Structure
+
+Date: 2026-04-04
+Status: Proposed and awaiting approval.
+
+### Objective
+Define the target folder structure for the modular upgrade and map the current codebase into it without breaking existing behavior.
+
+---
+
+## Proposed Target Backend Structure
+
+```text
+v3/backend/app/
+├── api/
+│   ├── routes/
+│   │   ├── auth_routes.py
+│   │   ├── learning_routes.py
+│   │   ├── knowledge_routes.py
+│   │   ├── progress_routes.py
+│   │   ├── commercial_routes.py
+│   │   └── admin_routes.py
+│   ├── websocket/
+│   │   ├── chat_ws.py
+│   │   ├── lesson_ws.py
+│   │   └── quiz_ws.py
+│   └── __init__.py
+├── core/
+│   ├── config_loader.py
+│   ├── debug_logger.py
+│   ├── security.py
+│   └── settings.py
+├── orchestration/
+│   ├── task_router.py
+│   ├── task_contracts.py
+│   ├── task_policies.py
+│   ├── retrieval_orchestrator.py
+│   ├── ingestion_orchestrator.py
+│   └── context_builder.py
+├── retrievers/
+│   ├── vector_retriever.py
+│   ├── keyword_retriever.py
+│   ├── session_retriever.py
+│   └── reranker.py
+├── ingestion/
+│   ├── parsers/
+│   │   ├── pdf_parser.py
+│   │   ├── image_parser.py
+│   │   ├── text_parser.py
+│   │   ├── ocr_adapter.py
+│   │   └── vision_adapter.py
+│   ├── metadata_enrichment.py
+│   └── chunking.py
+├── executors/
+│   ├── chat_executor.py
+│   ├── lesson_executor.py
+│   ├── quiz_executor.py
+│   ├── flashcard_executor.py
+│   ├── assessment_executor.py
+│   ├── translation_executor.py
+│   └── math_executor.py
+├── services/
+│   ├── identity/
+│   ├── knowledge/
+│   ├── learning/
+│   ├── progress/
+│   ├── commercial/
+│   └── collaboration/
+├── models/
+│   ├── request/
+│   ├── response/
+│   └── domain/
+└── storage/
+    ├── vector/
+    ├── cache/
+    └── persistence/
+```
+
+### Proposed Target Frontend Structure
+
+```text
+v3/frontend/src/
+├── app/
+│   ├── AppShell.jsx
+│   ├── routing/
+│   └── providers/
+├── pages/
+│   ├── ChatWorkspace.jsx
+│   ├── LessonWorkspace.jsx
+│   ├── QuizWorkspace.jsx
+│   ├── ProgressWorkspace.jsx
+│   ├── RoleWorkspace.jsx
+│   └── BillingWorkspace.jsx
+├── components/
+│   ├── shared/
+│   ├── chat/
+│   ├── lesson/
+│   ├── quiz/
+│   ├── progress/
+│   └── rolehub/
+├── hooks/
+│   ├── chat/
+│   ├── session/
+│   ├── progress/
+│   └── layout/
+├── services/
+│   ├── api/
+│   ├── websocket/
+│   ├── pwa/
+│   └── auth/
+└── utils/
+    ├── content/
+    ├── stream/
+    └── session/
+```
+
+---
+
+## Old → New Mapping (Backend)
+
+| Current Path | Proposed Target | Notes |
+|---|---|---|
+| `api/routes.py` | `api/routes/*_routes.py` | Split by domain while keeping one compatibility import surface first. |
+| `api/websocket.py` | `api/websocket/chat_ws.py`, `lesson_ws.py`, `quiz_ws.py` | Separate each WS flow into its own module. |
+| `modules/rag.py` | `orchestration/retrieval_orchestrator.py` + `executors/chat_executor.py` | Keep `rag.py` as compatibility wrapper during rollout. |
+| `modules/ingestion.py` | `ingestion/parsers/pdf_parser.py` + `ingestion/chunking.py` + `orchestration/ingestion_orchestrator.py` | Split extraction, chunking, and orchestration concerns. |
+| `modules/ocr.py` | `ingestion/parsers/ocr_adapter.py` | Preserve existing OCR behavior behind adapter naming. |
+| `modules/faiss_store.py` | `storage/vector/` + `retrievers/vector_retriever.py` | Keep FAISS backend but isolate storage from retrieval calls. |
+| `modules/kb_sync.py` | `orchestration/ingestion_orchestrator.py` or `services/knowledge/` | Reindex coordination moves out of the raw storage layer. |
+| `modules/lesson_plan.py` | `executors/lesson_executor.py` + `services/learning/lesson_service.py` | Existing logic can be wrapped before any deeper split. |
+| `modules/quiz.py` | `executors/quiz_executor.py` + `services/learning/quiz_service.py` | Preserve current generation logic. |
+| `modules/flashcards.py` | `executors/flashcard_executor.py` + `services/learning/flashcard_service.py` | Keep current route contract. |
+| `modules/assessment.py` | `executors/assessment_executor.py` + `services/learning/assessment_service.py` | Natural fit for learning domain. |
+| `modules/translation.py` | `executors/translation_executor.py` | Translation becomes a routed utility executor. |
+| `modules/auth.py`, `dependencies.py`, `ws_auth.py` | `services/identity/` | Identity/auth remains grouped but can be split internally. |
+| `modules/analytics.py`, `progress.py` | `services/progress/` | Analytics and progress stay together. |
+| `modules/subscriptions.py`, `policy.py` | `services/commercial/` | Commercial logic grouped under one service area. |
+| `modules/file_management.py` | `services/knowledge/file_service.py` | Uploads, file tree, and content resolution stay in the knowledge area. |
+| `schemas/request.py`, `schemas/response.py` | `models/request/`, `models/response/` | Naming aligns with domain/request-response grouping. |
+
+---
+
+## Old → New Mapping (Frontend)
+
+| Current Path | Proposed Target | Notes |
+|---|---|---|
+| `App.jsx` | `app/AppShell.jsx` | Main shell and high-level providers. |
+| `components/ChatPanel.jsx` | `pages/ChatWorkspace.jsx` + `components/chat/*` | Workspace shell separated from lower-level chat pieces. |
+| `components/LessonPanel.jsx` | `pages/LessonWorkspace.jsx` + `components/lesson/*` | Keep view logic grouped by workspace. |
+| `components/QuizPanel.jsx` | `pages/QuizWorkspace.jsx` + `components/quiz/*` | Same pattern as lesson/chat. |
+| `components/ProgressPanel.jsx` | `pages/ProgressWorkspace.jsx` + `components/progress/*` | Domain grouping for analytics UI. |
+| `components/RoleHubPanel.jsx` | `pages/RoleWorkspace.jsx` + `components/rolehub/*` | Role-specific UI stays grouped together. |
+| `components/BillingPanel.jsx` | `pages/BillingWorkspace.jsx` | Dedicated commercial workspace page. |
+| `services/api.js` | `services/api/` | Break into fetch client, offline queue, and endpoint helpers over time. |
+| `services/websocket.js` | `services/websocket/` | Split lifecycle and transport helpers. |
+| `services/pwa.js` | `services/pwa/` | Group install/offline helpers. |
+| `hooks/*` | `hooks/chat/`, `hooks/session/`, `hooks/progress/`, `hooks/layout/` | Organize by concern rather than one flat hook folder. |
+| `utils/*` | `utils/content/`, `utils/stream/`, `utils/session/` | Preserve extracted utilities while grouping by domain. |
+
+---
+
+## Migration Guidance
+To avoid breakage:
+1. create new folders first
+2. move logic behind compatibility wrappers/re-exports
+3. keep old import paths valid until each phase is fully verified
+4. only remove old paths after all dependent modules are updated and validated
+
+### Step 5 Conclusion
+The proposed structure groups the app around **API compatibility**, **orchestration**, **retrieval**, **ingestion**, **executors**, and **service domains**. The old-to-new mapping allows the codebase to move into that shape gradually without breaking current behavior. Approval is required before Step 5 can be marked completed or before moving to Step 6.

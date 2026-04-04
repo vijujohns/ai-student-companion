@@ -11,3 +11,5 @@
 - No additional deferred recommendations were added during Step 3 approval closure.
 - Consider using feature flags or configuration toggles for each refactor slice so old and new orchestration paths can run side-by-side during rollout.
 - No additional deferred recommendations were added during Step 4 approval closure.
+- Consider moving files into the new folders in small phases with import shims/backward-compatible re-exports to avoid sudden path breakage.
+- No additional deferred recommendations were added during Step 5 approval closure.
