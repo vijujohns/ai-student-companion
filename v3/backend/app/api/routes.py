@@ -63,6 +63,7 @@ from ..modules.artifacts import (
 )
 from ..modules.model_manager import get_active_model_profile_key, get_model_profiles, set_active_model_profile_key
 from ..modules.task_router import route_task
+from ..modules.generator_executor import execute_generator_task, is_generator_task
 
 # ✅ Import Pydantic schemas for validation
 from ..schemas.request import (
@@ -230,17 +231,28 @@ def ask(request: AskRequest, user=Depends(get_current_user)):
     _consume_quota_or_raise(user, "ask")
 
     try:
-        generate_kwargs = {
-            "query": query,
-            "user_id": user["username"],
-            "session_id": session_id,
-            "model_name": model_name,
-            "session_content_override": request.content_id,
-        }
-        if routed_task.model_task != "qa":
-            generate_kwargs["task"] = routed_task.model_task
+        use_generator_executor = bool(request.task) or bool(routed_task.explicit)
+        if is_generator_task(routed_task.model_task) and use_generator_executor:
+            ans = execute_generator_task(
+                task=routed_task.model_task,
+                query=query,
+                user_id=user["username"],
+                session_id=session_id,
+                model_name=model_name,
+                content_id=request.content_id,
+            )
+        else:
+            generate_kwargs = {
+                "query": query,
+                "user_id": user["username"],
+                "session_id": session_id,
+                "model_name": model_name,
+                "session_content_override": request.content_id,
+            }
+            if routed_task.model_task != "qa":
+                generate_kwargs["task"] = routed_task.model_task
 
-        ans = generate_answer(**generate_kwargs)
+            ans = generate_answer(**generate_kwargs)
     except Exception:
         release_usage(user["username"], "ask")
         raise

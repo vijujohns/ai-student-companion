@@ -18,6 +18,7 @@ from ..modules.ws_auth import require_websocket_auth, authenticate_websocket, ge
 from ..modules.policy import consume_quota, release_usage
 from ..modules.messages import get_message
 from ..modules.task_router import route_task
+from ..modules.generator_executor import execute_generator_task, is_generator_task
 from ..core.debug_logger import dlog, dwarn, derror
 import asyncio, json, traceback
 
@@ -165,7 +166,18 @@ async def websocket_ask(ws: WebSocket):
             keepalive_task = asyncio.create_task(send_waiting_status(ws, keepalive_stop))
             await send_json(ws, {"type": "status", "data": "Preparing your answer..."})
             try:
-                if routed_task.model_task == "qa":
+                use_generator_executor = bool(requested_task) or bool(routed_task.explicit)
+                if is_generator_task(routed_task.model_task) and use_generator_executor:
+                    generated_text = execute_generator_task(
+                        task=routed_task.model_task,
+                        query=query,
+                        user_id=user["username"],
+                        session_id=session_id,
+                        model_name=model_name,
+                        content_id=context_id,
+                    )
+                    stream_source = (f"{token} " for token in str(generated_text).split())
+                elif routed_task.model_task == "qa":
                     stream_source = generate_answer_stream(
                         query,
                         user["username"],

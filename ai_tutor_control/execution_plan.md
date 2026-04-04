@@ -39,13 +39,14 @@ approval_required: false
 notes: Multi-index hybrid retrieval added behind the existing FAISS-backed RAG flow; full regression suite verified green on 2026-04-04.
 
 Step 9: Generators
-status: PENDING
+status: COMPLETED
 approval_required: false
-notes: Next active step after Step 8 completion.
+notes: Compatibility-first generator executor added for quiz, flashcards, and summary flows; full regression suite verified green on 2026-04-04.
 
 Step 10: Image Pipeline
 status: PENDING
 approval_required: false
+notes: Next active step after Step 9 completion.
 
 Step 11: Math + Translation
 status: PENDING

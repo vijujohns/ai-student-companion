@@ -19,3 +19,5 @@
 - Step 7 closure note: visual Playwright baselines were refreshed during the required full-suite validation after no UI contract breakage was observed.
 - Consider promoting the new hybrid retrieval weights and preferred source mixes into config so they can be tuned without code changes.
 - Consider adding richer citation/confidence metadata to the response envelope once the later generator/executor steps are complete.
+- Consider standardizing the generator output into a structured artifact envelope (for example `quiz`, `flashcards`, `summary`) once the remaining executor/image/math steps are finished.
+- Consider exposing generator-task selection more explicitly from the frontend UI instead of relying mainly on chat phrasing and optional task hints.

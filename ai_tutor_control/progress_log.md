@@ -87,6 +87,18 @@
 - Step 8 closed; Step 9 is now the next pending step.
 
 ## Step 9
+- Date: 2026-04-04
+- Status: Completed.
+- Confirmed Step 9 as the active non-approval-gated implementation step.
+- Added `v3/backend/app/modules/generator_executor.py` as a compatibility-first execution layer for `quiz`, `flashcards`, and `summary` tasks.
+- Integrated the generator executor into `v3/backend/app/api/routes.py` and `v3/backend/app/api/websocket.py` for explicit generator requests while preserving the earlier implicit compatibility path.
+- Reused the existing quiz generator, flashcard generator, and saved-ingestion summary flow instead of introducing new dependencies or breaking route contracts.
+- Added focused backend coverage in `v3/test_suite/backend/test_generator_executor.py`.
+- Full regression verification completed after the code change:
+  - Backend: `538 passed, 1 skipped, 3 warnings`
+  - Frontend unit: `169 passed`
+  - Frontend Playwright: `15 passed`
+- Step 9 closed; Step 10 is now the next pending step.
 
 ## Step 10
 
