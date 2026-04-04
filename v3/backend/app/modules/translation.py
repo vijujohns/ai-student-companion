@@ -9,6 +9,8 @@ multilingual tutoring UI.
 from __future__ import annotations
 
 import logging
+import os
+from functools import lru_cache
 from typing import Dict, List, Optional
 
 try:
@@ -53,6 +55,51 @@ _FALLBACK_PHRASES: Dict[str, str] = {
     "namaste": "hello",
     "dhanyawad": "thank you",
 }
+_INDIC_LANGUAGE_CODES = {"hi", "bn", "ta", "te", "mr", "gu", "kn", "ml", "pa", "ur", "or", "as"}
+
+
+def _indictrans2_enabled() -> bool:
+    flag = str(os.getenv("ENABLE_INDIC_TRANS2", "")).strip().lower()
+    return flag in {"1", "true", "yes", "on"}
+
+
+@lru_cache(maxsize=2)
+def _load_indictrans2_backend(direction: str):
+    from transformers import AutoModelForSeq2SeqLM, AutoTokenizer  # type: ignore
+
+    if direction == "en-indic":
+        model_name = os.getenv("INDICTRANS2_EN_INDIC_MODEL", "ai4bharat/indictrans2-en-indic-1B")
+    else:
+        model_name = os.getenv("INDICTRANS2_INDIC_EN_MODEL", "ai4bharat/indictrans2-indic-en-1B")
+
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    model = AutoModelForSeq2SeqLM.from_pretrained(model_name, trust_remote_code=True)
+    return tokenizer, model
+
+
+def _translate_with_indictrans2(text: str, *, target: str, source: str = "auto") -> Optional[str]:
+    if not _indictrans2_enabled() or not text or not text.strip():
+        return None
+
+    normalized_source = (source or "auto").strip().lower()
+    use_en_to_indic = target in _INDIC_LANGUAGE_CODES and normalized_source in {"auto", "en"}
+    use_indic_to_en = target == "en" and normalized_source in _INDIC_LANGUAGE_CODES
+
+    if not use_en_to_indic and not use_indic_to_en:
+        return None
+
+    direction = "en-indic" if use_en_to_indic else "indic-en"
+
+    try:
+        tokenizer, model = _load_indictrans2_backend(direction)
+        inputs = tokenizer(text, return_tensors="pt", truncation=True)
+        outputs = model.generate(**inputs, max_new_tokens=256)
+        decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
+        result = (decoded[0] if decoded else "").strip()
+        return result or None
+    except Exception as exc:
+        logger.debug("IndicTrans2 translation failed: %s", exc)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +138,10 @@ def translate_text(
     # No-op when source and target are the same known language
     if source != "auto" and source == target:
         return text
+
+    indic_result = _translate_with_indictrans2(text, target=target, source=source)
+    if indic_result:
+        return indic_result
 
     try:
         if GoogleTranslator is None:

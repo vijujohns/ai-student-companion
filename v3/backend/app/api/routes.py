@@ -64,6 +64,7 @@ from ..modules.artifacts import (
 from ..modules.model_manager import get_active_model_profile_key, get_model_profiles, set_active_model_profile_key
 from ..modules.task_router import route_task
 from ..modules.generator_executor import execute_generator_task, is_generator_task
+from ..modules.utility_executor import execute_utility_task, is_utility_task
 
 # ✅ Import Pydantic schemas for validation
 from ..schemas.request import (
@@ -232,7 +233,16 @@ def ask(request: AskRequest, user=Depends(get_current_user)):
 
     try:
         use_generator_executor = bool(request.task) or bool(routed_task.explicit)
-        if is_generator_task(routed_task.model_task) and use_generator_executor:
+        if is_utility_task(routed_task.model_task):
+            ans = execute_utility_task(
+                task=routed_task.model_task,
+                query=query,
+                user_id=user["username"],
+                session_id=session_id,
+                model_name=model_name,
+                content_id=request.content_id,
+            )
+        elif is_generator_task(routed_task.model_task) and use_generator_executor:
             ans = execute_generator_task(
                 task=routed_task.model_task,
                 query=query,

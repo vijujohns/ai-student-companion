@@ -49,13 +49,14 @@ approval_required: false
 notes: OCR + image extraction enrichment added behind the existing upload/index path; full regression suite verified green on 2026-04-04.
 
 Step 11: Math + Translation
-status: PENDING
+status: COMPLETED
 approval_required: false
-notes: Next active step after Step 10 completion.
+notes: SymPy-backed math handling and IndicTrans2-compatible translation fallback added behind the existing ask/streaming paths; full regression suite verified green on 2026-04-04.
 
 Step 12: End-to-End Validation 
 status : PENDING 
 approval_required: true
+notes: Next active step after Step 11 completion.
 
 Step 13: RAG Optimization 
 status : PENDING 

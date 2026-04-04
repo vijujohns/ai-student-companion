@@ -115,3 +115,19 @@
 - Step 10 closed; Step 11 is now the next pending step.
 
 ## Step 11
+- Date: 2026-04-04
+- Status: Completed.
+- Confirmed Step 11 as the active non-approval-gated implementation step.
+- Added `v3/backend/app/modules/math_executor.py` for SymPy-backed math solving with safe fallback to the existing model path for broader prompts.
+- Added `v3/backend/app/modules/translation_executor.py` and `v3/backend/app/modules/utility_executor.py` so routed `math` and `translation` requests now use dedicated utility executors behind `/ask` and `/ws/ask`.
+- Upgraded `v3/backend/app/modules/translation.py` with an optional IndicTrans2-compatible backend path, while preserving the current `deep-translator` fallback when local IndicTrans2 support is not enabled.
+- Added focused backend coverage in `v3/test_suite/backend/test_math_translation_executor.py`.
+- Dependency check result for this step:
+  - `sympy` was already present in the active environment and is now explicitly pinned in `v3/backend/requirements.txt`
+  - IndicTrans2 runtime support is optional/config-driven; the current environment continues to fall back safely when that backend is unavailable
+- Full regression verification completed after the code change:
+  - Focused backend Step 11 suites: `77 passed, 3 warnings`
+  - Backend: `545 passed, 1 skipped, 3 warnings`
+  - Frontend unit: `169 passed`
+  - Frontend Playwright: `15 passed`
+- Step 11 closed; Step 12 is now the next pending step.

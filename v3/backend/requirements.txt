@@ -11,3 +11,4 @@ tqdm
 llama-cpp-python
 openai
 python-dotenv
+sympy
