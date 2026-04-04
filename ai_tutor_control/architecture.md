@@ -725,3 +725,89 @@ To avoid breakage:
 
 ### Step 5 Conclusion
 The proposed structure groups the app around **API compatibility**, **orchestration**, **retrieval**, **ingestion**, **executors**, and **service domains**. The old-to-new mapping allows the codebase to move into that shape gradually without breaking current behavior. Approval is required before Step 5 can be marked completed or before moving to Step 6.
+
+## Step 6 - Dependency Check
+
+Date: 2026-04-04
+Status: Reported and awaiting approval.
+
+### Objective
+Check what dependencies already exist, identify what is already sufficient for the planned upgrade, and suggest any missing dependencies without installing them.
+
+---
+
+## Current Declared Dependencies
+
+### Backend (`v3/backend/requirements.txt`)
+Already declared:
+- `fastapi`
+- `uvicorn`
+- `redis`
+- `faiss-cpu`
+- `sentence-transformers`
+- `deep-translator`
+- `python-jose`
+- `pypdf`
+- `python-docx`
+- `tqdm`
+- `llama-cpp-python`
+- `openai`
+- `python-dotenv`
+
+### Frontend (`v3/frontend/package.json`)
+Already declared:
+- runtime: `react`, `react-dom`, `react-icons`, `react-datepicker`, `react-markdown`, `remark-gfm`, `rehype-highlight`
+- dev/test: `vite`, `vitest`, `@playwright/test`, `@testing-library/react`, `@testing-library/jest-dom`, `jsdom`
+
+---
+
+## Environment Cross-Check
+The configured Python environment already contains important runtime packages including:
+- `fastapi`, `uvicorn`, `redis`, `faiss-cpu`, `sentence-transformers`, `torch`, `transformers`
+- `pydantic`, `numpy`, `scikit-learn`, `scipy`
+- `llama_cpp_python`, `openai`, `python-jose`, `python-dotenv`
+- `python-multipart`, `passlib`, `sympy`
+
+This means the current environment is stronger than the minimal `requirements.txt` file in a few areas.
+
+---
+
+## Dependency Assessment
+
+| Area | Status | Notes |
+|---|---|---|
+| FastAPI backend | **Present** | Core web/API stack is already declared and installed. |
+| Local LLM support | **Present** | `llama-cpp-python` and local GGUF model workflow already exist. |
+| Vector retrieval | **Present** | `faiss-cpu` + `sentence-transformers` already support the current RAG stack. |
+| Translation | **Present** | `deep-translator` is already declared and used. |
+| Document parsing | **Present** | `pypdf` and `python-docx` are already declared. |
+| Frontend app/test stack | **Present** | React, Vite, Vitest, and Playwright are already in place. |
+| OCR enablement | **Missing / optional** | `ocr.py` expects `pytesseract` and `Pillow`, but they are not declared in `requirements.txt` and were not present in the configured environment package list. OCR currently degrades gracefully. |
+| Upload form runtime pinning | **Should be explicitly declared** | `python-multipart` is present in the environment and required by FastAPI `UploadFile`/`Form` usage, but it is not listed in `requirements.txt`. |
+| Password hashing runtime pinning | **Should be explicitly declared** | `passlib`/`bcrypt` support appears in the environment, but those runtime auth dependencies are not currently pinned in `requirements.txt`. |
+| Planned math executor | **Mostly available** | `sympy` is already installed in the environment, so a math path may not need a brand-new dependency; however it is not currently declared in `requirements.txt`. |
+| Planned hybrid lexical retrieval | **Not present yet** | If the approved retrieval upgrade requires BM25/lexical ranking, a package such as `rank-bm25` would need approval and explicit addition. |
+
+---
+
+## Suggested Missing Dependencies
+
+### For current feature completeness
+These are the clearest missing runtime dependencies to consider **if approved**:
+- `Pillow`
+- `pytesseract`
+- `python-multipart` (explicit pin in `requirements.txt`)
+- `passlib[bcrypt]` or equivalent explicit auth pinning
+
+### For planned future architecture
+Only if the approved future steps require them:
+- `rank-bm25` for a lexical retriever in the multi-index RAG design
+- explicit `sympy` pinning for the dedicated math executor path
+
+---
+
+## Recommendation
+No immediate dependency installation is required for analysis/design steps. The backend already has most of the necessary foundation for task routing, multi-index retrieval scaffolding, and model execution. The main dependency gaps are around **OCR completeness** and **making currently implicit runtime dependencies explicit and reproducible**.
+
+### Step 6 Conclusion
+Most core dependencies are already present. The main suggested additions are **OCR-related packages** (`Pillow`, `pytesseract`) and explicit pinning of **runtime dependencies already relied on by the environment** (`python-multipart`, `passlib`, and, if approved, `sympy` / `rank-bm25`). Approval is required before Step 6 can be marked completed or before moving to Step 7.

@@ -13,3 +13,5 @@
 - No additional deferred recommendations were added during Step 4 approval closure.
 - Consider moving files into the new folders in small phases with import shims/backward-compatible re-exports to avoid sudden path breakage.
 - No additional deferred recommendations were added during Step 5 approval closure.
+- Consider explicitly pinning runtime dependencies already relied on in the environment but not declared in `v3/backend/requirements.txt` (for example `python-multipart`, `passlib`, and any approved OCR/math packages) to improve reproducibility.
+- No additional deferred recommendations were added during Step 6 approval closure.
