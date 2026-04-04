@@ -7,3 +7,5 @@
 - Consider introducing a hybrid retrieval layer with re-ranking/citation scoring on top of the current FAISS-only retrieval baseline.
 - Consider adding a dedicated math-solver/validator path instead of relying on the general LLM flow for mathematics-heavy queries.
 - No additional deferred recommendations were added during Step 2 approval closure.
+- Consider introducing all new orchestration layers behind existing service ports first, to preserve current route contracts and reduce migration risk.
+- No additional deferred recommendations were added during Step 3 approval closure.

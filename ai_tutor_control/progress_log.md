@@ -20,6 +20,13 @@
 - Approval received from user; Step 2 closed without starting Step 3.
 
 ## Step 3
+- Date: 2026-04-04
+- Status: Completed after user approval.
+- Confirmed Step 3 as the active step and kept `execution_plan.md` at `IN PROGRESS` until approval.
+- Designed a modular upgrade architecture centered on three upgrade pillars: multi-modal ingestion, multi-index RAG, and task routing.
+- Preserved the existing FastAPI routes, service ports, and session flows as the compatibility shell.
+- Saved the proposed target architecture in `ai_tutor_control/architecture.md`.
+- Approval received from user; Step 3 closed without starting Step 4.
 
 ## Step 4
 

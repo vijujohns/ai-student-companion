@@ -177,3 +177,222 @@ Status: Documented and awaiting approval.
 
 ### Step 2 Conclusion
 The system already covers most core tutoring workflows. The biggest remaining gaps relative to the required upgrade path are **task routing**, **retrieval quality improvements**, **deeper image understanding**, and **specialized math handling**. Approval is required before Step 2 can be marked completed or before moving to Step 3.
+
+## Step 3 - Architecture Design
+
+Date: 2026-04-04
+Status: Designed and awaiting approval.
+
+### Goal
+Design a modular upgrade architecture that extends the current system without breaking existing routes, sessions, quotas, or UI flows.
+
+### Design Principles
+1. **Preserve contracts first** — keep current REST/WS endpoints stable and insert new logic behind the existing service layer.
+2. **Separate orchestration from execution** — routing, retrieval, ingestion, and generation should be distinct modules.
+3. **Prefer additive modules** — new capabilities should plug into the current monolith before any extraction.
+4. **Keep user/session context central** — all orchestration should respect the existing `user_id`, `session_id`, `content_id`, quota, and history model.
+
+---
+
+### Target Modular Architecture
+
+```text
+Frontend / Existing Routes
+        |
+        v
+API Compatibility Layer (`api/routes.py`, `api/websocket.py`)
+        |
+        v
+Task Router Layer
+  - intent classification
+  - task policy / entitlement checks
+  - fallback rules
+        |
+        +-------------------+--------------------+--------------------+
+        |                   |                    |                    |
+        v                   v                    v                    v
+Learning Executors     Retrieval Orchestrator  Ingestion Orchestrator  Utility Executors
+(chat/lesson/quiz)     (multi-index RAG)       (multi-modal parsing)   (translation/math/etc.)
+        |                   |                    |                    |
+        v                   v                    v                    v
+Current generators     Vector + lexical index   PDF/OCR/image parsers   specialized adapters
+and service ports      adapters + reranker      metadata enrichment      with shared policies
+```
+
+---
+
+### 1) Multi-Modal Ingestion Architecture
+
+#### Proposed Components
+- `modules/ingestion_orchestrator.py`
+  - central entry for all new ingestion jobs
+  - determines file/media type and dispatches to the right parser
+- `modules/parsers/pdf_parser.py`
+- `modules/parsers/image_parser.py`
+- `modules/parsers/text_parser.py`
+- `modules/parsers/ocr_adapter.py`
+- `modules/parsers/vision_adapter.py` (future-facing for diagram/image understanding)
+- `modules/metadata_enrichment.py`
+  - extracts title, class, subject, chapter hints, keywords, language, and modality tags
+
+#### Ingestion Pipeline
+1. File enters via existing upload route.
+2. Ingestion orchestrator detects modality:
+   - PDF/document
+   - image/photo/diagram
+   - plain text/notes
+3. Appropriate parser extracts content.
+4. Metadata enrichment attaches:
+   - `source_type`
+   - `language`
+   - `subject`
+   - `chapter_hint`
+   - `content_tags`
+5. Output is normalized into a shared `DocumentChunk` shape:
+   - `text`
+   - `source`
+   - `chunk_id`
+   - `modality`
+   - `metadata`
+6. Normalized chunks are published to the retrieval layer.
+
+#### Why this is modular
+- Existing `ingestion.py` and `ocr.py` stay operational.
+- The new orchestrator becomes the compatibility wrapper for future modalities without forcing route changes.
+
+---
+
+### 2) Multi-Index RAG Architecture
+
+#### Problem in the current design
+The current retrieval path is strong but mostly centered on one FAISS store plus filtering. That works for baseline tutoring, but it does not yet separate different knowledge scopes or support richer ranking.
+
+#### Proposed Index Strategy
+Use a retrieval orchestrator with multiple logical indexes:
+
+1. **Curriculum Index**
+   - source: `knowledge_base/`
+   - purpose: syllabus and textbook grounding
+
+2. **User Upload Index**
+   - source: uploaded PDFs/images/notes
+   - purpose: personal study material grounding
+
+3. **Session Memory Index**
+   - source: chat/session artifacts, recent summaries, lesson outcomes
+   - purpose: short-horizon personalization and follow-up continuity
+
+4. **Artifact Index**
+   - source: flashcards, quizzes, lesson cards, assessment outputs
+   - purpose: retrieve previously generated learning artifacts as context
+
+#### Proposed Retrieval Stack
+- `modules/retrieval_orchestrator.py`
+- `modules/retrievers/vector_retriever.py`
+- `modules/retrievers/keyword_retriever.py`
+- `modules/retrievers/session_retriever.py`
+- `modules/reranker.py`
+- `modules/context_builder.py`
+
+#### Retrieval Flow
+1. Task router passes task + query + scope.
+2. Retrieval orchestrator chooses indexes based on task:
+   - chat -> curriculum + uploads + session memory
+   - lesson -> curriculum + uploads + prior lesson artifacts
+   - quiz -> curriculum + lesson artifacts + session memory
+3. Each retriever returns candidates independently.
+4. Reranker merges and scores candidates.
+5. Context builder produces a bounded context packet for the selected executor.
+
+#### Recommended Context Packet Shape
+- `task`
+- `query`
+- `citations[]`
+- `context_chunks[]`
+- `confidence_score`
+- `source_mix` (`curriculum`, `upload`, `session`, `artifact`)
+
+#### Result
+This keeps the current FAISS foundation but evolves it into a multi-source retrieval architecture instead of a single-path search call.
+
+---
+
+### 3) Task Router Architecture
+
+#### Purpose
+Add an explicit router that decides **what kind of tutoring action** a request represents before model invocation.
+
+#### Proposed Components
+- `modules/task_router.py`
+- `modules/task_contracts.py`
+- `modules/task_policies.py`
+- `modules/task_executors/`
+  - `chat_executor.py`
+  - `lesson_executor.py`
+  - `quiz_executor.py`
+  - `flashcard_executor.py`
+  - `assessment_executor.py`
+  - `translation_executor.py`
+  - `math_executor.py` (future dedicated path)
+
+#### Router Responsibilities
+1. classify the user request intent
+2. validate entitlement / quota / role rules
+3. choose the execution path
+4. choose retrieval scope
+5. choose the model profile or specialized executor
+6. standardize the response envelope back to existing routes
+
+#### Suggested Routing Categories
+- `qa`
+- `lesson`
+- `quiz`
+- `flashcards`
+- `assessment`
+- `translation`
+- `math`
+- `admin/system`
+
+#### Routing Decision Inputs
+- route source (`/ask`, `/ws/ask`, lesson, quiz, etc.)
+- explicit frontend mode
+- content context presence
+- user role
+- quota/plan entitlement
+- lightweight intent heuristics or classifier result
+
+#### Fallback Policy
+If intent confidence is low:
+- default to `qa`
+- preserve current behavior
+- log the ambiguous case for later tuning
+
+---
+
+### Integration with the Existing System
+
+#### Preserve as-is
+- `api/routes.py`
+- `api/websocket.py`
+- `ServiceRegistry`
+- auth/session/quota layers
+- lesson/quiz/flashcard generators
+
+#### Insert behind current entry points
+- `/ask` and `/ws/ask` call the task router first
+- task router selects retrieval plan + executor
+- executors reuse current modules (`rag.py`, `lesson_plan.py`, `quiz.py`, `flashcards.py`, `assessment.py`)
+
+This gives modular behavior without forcing a UI or API rewrite.
+
+---
+
+### Recommended Phase Order
+1. **Introduce task router shell** behind current chat endpoints.
+2. **Introduce retrieval orchestrator** while keeping FAISS as the first index backend.
+3. **Wrap ingestion in a multi-modal orchestrator** using current PDF/OCR code paths.
+4. **Add specialized math executor** as a separate route through the router.
+5. **Only then** consider deeper extraction or service splitting.
+
+### Step 3 Conclusion
+The recommended architecture is a **modular orchestration layer** built on top of the current monolith: a **multi-modal ingestion orchestrator**, a **multi-index retrieval orchestrator**, and a **task router** that dispatches to existing and future executors. Approval is required before Step 3 can be marked completed or before moving to Step 4.
