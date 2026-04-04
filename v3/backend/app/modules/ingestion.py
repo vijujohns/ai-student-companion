@@ -242,28 +242,43 @@ def ingest_pdf(file_path, model_name=None):
 
 def ingest_image(file_path: str, model_name=None) -> None:
     """
-    Image ingestion pipeline using OCR:
-    1. Extract text from image via OCR (Tesseract, if available)
-    2. Chunk extracted text
-    3. Add chunks to FAISS
-
-    If OCR is unavailable or the image yields no text, logs a warning and
-    returns without adding any chunks (the file is still marked as indexed
-    so it doesn't get re-queued endlessly).
+    Image ingestion pipeline using OCR plus lightweight metadata extraction:
+    1. Extract OCR text and title/keyword hints
+    2. Save a short summary for later study use
+    3. Chunk enriched text
+    4. Add chunks to FAISS
     """
     from .faiss_store import add_doc
-    from .ocr import extract_text_from_image
+    from .image_pipeline import extract_image_content
 
     print(f"Ingesting image (OCR): {file_path}")
 
-    text = extract_text_from_image(file_path)
-    if not text.strip():
+    image_content = extract_image_content(file_path, model_name=model_name)
+    text = str(image_content.get("text") or "").strip()
+    summary = str(image_content.get("summary") or "").strip()
+    title = str(image_content.get("title") or os.path.splitext(os.path.basename(file_path))[0]).strip()
+    modality = str(image_content.get("modality") or "image").strip()
+    keywords = image_content.get("keywords") or []
+
+    if summary:
+        save_summary(file_path, summary)
+
+    if not text:
         print(f"⚠️  No text extracted from image: {file_path} (OCR unavailable or blank image)")
         return
 
     chunks = chunk_text(text)
-    for chunk in chunks:
-        add_doc(chunk, source=file_path)
+    source_name = os.path.basename(file_path)
+    for index, chunk in enumerate(chunks, start=1):
+        enriched_chunk = (
+            f"Image: {title}\n"
+            f"Source: {source_name}\n"
+            f"Modality: {modality}\n"
+            f"Keywords: {', '.join(map(str, keywords))}\n"
+            f"OCR Summary: {summary or 'No summary available.'}\n"
+            f"Chunk {index}:\n{chunk}"
+        )
+        add_doc(enriched_chunk, source=file_path)
 
     print(f"✅ Ingested {len(chunks)} OCR chunks from image successfully")
 

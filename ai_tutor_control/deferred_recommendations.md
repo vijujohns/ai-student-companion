@@ -21,3 +21,4 @@
 - Consider adding richer citation/confidence metadata to the response envelope once the later generator/executor steps are complete.
 - Consider standardizing the generator output into a structured artifact envelope (for example `quiz`, `flashcards`, `summary`) once the remaining executor/image/math steps are finished.
 - Consider exposing generator-task selection more explicitly from the frontend UI instead of relying mainly on chat phrasing and optional task hints.
+- Consider upgrading the new OCR-first image pipeline to optional multimodal caption/diagram understanding later if an approved local or hosted vision model is introduced.

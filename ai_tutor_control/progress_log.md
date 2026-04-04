@@ -101,5 +101,17 @@
 - Step 9 closed; Step 10 is now the next pending step.
 
 ## Step 10
+- Date: 2026-04-04
+- Status: Completed.
+- Confirmed Step 10 as the active non-approval-gated implementation step.
+- Added `v3/backend/app/modules/image_pipeline.py` as a compatibility-first OCR/image extraction helper that derives titles, keywords, and student-friendly summaries from uploaded images.
+- Upgraded `v3/backend/app/modules/ingestion.py` so `ingest_image()` now saves an image summary and indexes enriched OCR chunks (`Image`, `Source`, `Keywords`, `OCR Summary`) without changing the existing upload flow.
+- Added focused backend coverage in `v3/test_suite/backend/test_image_pipeline.py`.
+- No new dependencies were added; the implementation reuses the existing OCR stack and current summary storage path.
+- Full regression verification completed after the code change:
+  - Backend: `541 passed, 1 skipped, 3 warnings`
+  - Frontend unit: `169 passed`
+  - Frontend Playwright: `15 passed`
+- Step 10 closed; Step 11 is now the next pending step.
 
 ## Step 11

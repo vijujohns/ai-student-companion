@@ -44,10 +44,31 @@ approval_required: false
 notes: Compatibility-first generator executor added for quiz, flashcards, and summary flows; full regression suite verified green on 2026-04-04.
 
 Step 10: Image Pipeline
-status: PENDING
+status: COMPLETED
 approval_required: false
-notes: Next active step after Step 9 completion.
+notes: OCR + image extraction enrichment added behind the existing upload/index path; full regression suite verified green on 2026-04-04.
 
 Step 11: Math + Translation
 status: PENDING
+approval_required: false
+notes: Next active step after Step 10 completion.
+
+Step 12: End-to-End Validation 
+status : PENDING 
+approval_required: true
+
+Step 13: RAG Optimization 
+status : PENDING 
+approval_required: true
+
+Step 14: Performance Optimization 
+status : PENDING 
+approval_required: false
+
+Step 15: UX Improvements 
+status : PENDING 
+approval_required: false
+
+Step 16: Production Hardening
+status : PENDING 
 approval_required: false
