@@ -1,5 +1,6 @@
 {
-  "default_model": "mistral-7b",
+  "default_model": "qwen2.5-7b",
+  "active_model_profile": "balanced",
 
   "network": {
     "backend": {
@@ -33,10 +34,69 @@
   },
 
   "tasks": {
-    "qa": "mistral-7b",
-    "summary": "tinyllama-1.1b-chat",
-    "flashcards": "mistral-7b",
-    "quiz": "mistral-7b"
+    "qa": "qwen2.5-7b",
+    "lesson": "qwen2.5-7b",
+    "summary": "mistral-7b",
+    "flashcards": "qwen2.5-7b",
+    "quiz": "phi-4"
+  },
+
+  "model_profiles": {
+    "balanced": {
+      "label": "Balanced",
+      "description": "Recommended mix of quality and speed for daily use.",
+      "task_models": {
+        "qa": "qwen2.5-7b",
+        "lesson": "qwen2.5-7b",
+        "quiz": "phi-4",
+        "flashcards": "qwen2.5-7b",
+        "summary": "mistral-7b"
+      }
+    },
+    "best-quality": {
+      "label": "Best quality",
+      "description": "Use stronger explanation and reasoning models where possible.",
+      "task_models": {
+        "qa": "meta-llama-3-8b",
+        "lesson": "meta-llama-3-8b",
+        "quiz": "phi-4",
+        "flashcards": "qwen2.5-7b",
+        "summary": "mistral-7b"
+      }
+    },
+    "fastest": {
+      "label": "Fastest",
+      "description": "Favor the quickest local responses for all users.",
+      "task_models": {
+        "qa": "tinyllama-1.1b-chat",
+        "lesson": "mistral-7b",
+        "quiz": "tinyllama-1.1b-chat",
+        "flashcards": "tinyllama-1.1b-chat",
+        "summary": "tinyllama-1.1b-chat"
+      }
+    },
+    "single-model": {
+      "label": "Single-model simplicity",
+      "description": "Keep behavior consistent by using one main model for almost everything.",
+      "task_models": {
+        "qa": "qwen2.5-7b",
+        "lesson": "qwen2.5-7b",
+        "quiz": "qwen2.5-7b",
+        "flashcards": "qwen2.5-7b",
+        "summary": "mistral-7b"
+      }
+    },
+    "safe-fallback": {
+      "label": "Safe fallback",
+      "description": "Use the most proven local models for stable, predictable behavior.",
+      "task_models": {
+        "qa": "mistral-7b",
+        "lesson": "mistral-7b",
+        "quiz": "mistral-7b",
+        "flashcards": "mistral-7b",
+        "summary": "mistral-7b"
+      }
+    }
   },
 
   "models": {
@@ -54,6 +114,27 @@
       "temperature": 0.3,
       "n_ctx": 4096
     },
+    "qwen2.5-7b": {
+      "type": "local",
+      "path": "models/Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+      "max_tokens": 450,
+      "temperature": 0.25,
+      "n_ctx": 4096
+    },
+    "phi-4": {
+      "type": "local",
+      "path": "models/phi-4-Q4_K_M.gguf",
+      "max_tokens": 450,
+      "temperature": 0.2,
+      "n_ctx": 4096
+    },
+    "meta-llama-3-8b": {
+      "type": "local",
+      "path": "models/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf",
+      "max_tokens": 450,
+      "temperature": 0.2,
+      "n_ctx": 4096
+    },
     "gpt-3.5-turbo": {
       "type": "cloud",
       "provider": "openai",
@@ -65,6 +146,13 @@
 
   "rag": {
     "top_k": 4,
-    "strict_mode": true
+    "strict_mode": true,
+    "embedding_model": "BAAI/bge-base-en-v1.5",
+    "chunk_size": 1000,
+    "chunk_overlap": 180,
+    "summary_chunk_size": 2200,
+    "summary_chunk_overlap": 250,
+    "document_top_k": 8,
+    "use_precomputed_summaries": true
   }
 }

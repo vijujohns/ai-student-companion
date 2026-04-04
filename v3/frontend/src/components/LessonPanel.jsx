@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FiBookOpen,
   FiCheckSquare,
@@ -10,6 +10,19 @@ import {
   FiZap,
 } from "react-icons/fi";
 import { apiFetch, parseApiError } from "../services/api";
+
+
+function renderStructuredList(items, ordered = false) {
+  if (!Array.isArray(items) || items.length === 0) return null;
+  const ListTag = ordered ? "ol" : "ul";
+  return (
+    <ListTag className={`lesson-step__list ${ordered ? "lesson-step__list--ordered" : ""}`}>
+      {items.map((item, index) => (
+        <li key={`${ordered ? "ordered" : "bullet"}-${index}-${item}`}>{item}</li>
+      ))}
+    </ListTag>
+  );
+}
 
 function createSessionId() {
   return `${Date.now()}`;
@@ -29,6 +42,9 @@ export default function LessonPanel({
   onLessonSessionsChange,
   planSummary = null,
   defaultChapter = "",
+  prefillContext = "",
+  autoRunToken = "",
+  prefilledPlanData = null,
   currentContextLabel = null,
   hasLinkedContent = false,
   isContextViewerVisible = false,
@@ -46,6 +62,10 @@ export default function LessonPanel({
   const [loadingPhase, setLoadingPhase] = useState(0);
   const [error, setError] = useState("");
   const [expandedSteps, setExpandedSteps] = useState({});
+  const pendingGeneratedSessionRef = useRef("");
+  const skipNextSessionLoadRef = useRef(false);
+  const loadingRef = useRef(false);
+  const onResultReadyRef = useRef(onResultReady);
 
   const getLimitState = useCallback(
     (action) => {
@@ -85,6 +105,14 @@ export default function LessonPanel({
     }));
   };
 
+  useEffect(() => {
+    loadingRef.current = loading;
+  }, [loading]);
+
+  useEffect(() => {
+    onResultReadyRef.current = onResultReady;
+  }, [onResultReady]);
+
   const loadLessonCards = useCallback(
     async (lessonPlanId) => {
       if (!lessonPlanId) {
@@ -102,15 +130,15 @@ export default function LessonPanel({
         const data = await res.json();
         const items = Array.isArray(data?.cards) ? data.cards : [];
         setCards(items);
-        if (items.length > 0 && onResultReady) {
-          onResultReady();
+        if (items.length > 0 && onResultReadyRef.current) {
+          onResultReadyRef.current();
         }
       } catch (err) {
         console.error("Failed to load lesson cards", err);
         setCards([]);
       }
     },
-    [onResultReady]
+    []
   );
 
   const loadArtifact = useCallback(async (artifactId, explicitCardId = null) => {
@@ -159,6 +187,12 @@ export default function LessonPanel({
         if (planRes.ok) {
           const planData = await planRes.json();
           const hasPlan = planData && Array.isArray(planData.steps) && planData.steps.length > 0;
+          if (!hasPlan && (loadingRef.current || pendingGeneratedSessionRef.current === String(sid))) {
+            return;
+          }
+          if (hasPlan) {
+            pendingGeneratedSessionRef.current = "";
+          }
           setPlan(hasPlan ? planData : null);
           setArtifactByCard({});
           setArtifactMetaByCard({});
@@ -167,13 +201,13 @@ export default function LessonPanel({
           } else if (hasPlan) {
             setCards([]);
           }
-          if (hasPlan && onResultReady) {
-            onResultReady();
+          if (hasPlan && onResultReadyRef.current) {
+            onResultReadyRef.current();
           }
           if (planData?.chapter) {
             setChapter(planData.chapter);
           }
-        } else if (planRes.status === 404) {
+        } else if (planRes.status === 404 && !loadingRef.current && pendingGeneratedSessionRef.current !== String(sid)) {
           setPlan(null);
           setCards([]);
         }
@@ -181,10 +215,10 @@ export default function LessonPanel({
         console.error("Failed to load lesson session", err);
       }
     },
-    [loadLessonCards, onResultReady]
+    [loadLessonCards]
   );
 
-  const runGeneratePlan = async ({ reuseSession = false } = {}) => {
+  const runGeneratePlan = async ({ reuseSession = false, preferCurrentSession = false } = {}) => {
     if (lessonLimit.blocked) {
       setError(
         `Lesson generation limit reached (${lessonLimit.used}/${lessonLimit.limit}). Upgrade plan to continue.`
@@ -217,8 +251,11 @@ export default function LessonPanel({
         return;
       }
     } else {
-      sid = createSessionId();
-      onLessonSessionChange?.(sid);
+      sid = preferCurrentSession && lessonSessionId ? lessonSessionId : createSessionId();
+      pendingGeneratedSessionRef.current = sid;
+      if (!preferCurrentSession || !lessonSessionId) {
+        onLessonSessionChange?.(sid);
+      }
     }
 
     try {
@@ -245,6 +282,7 @@ export default function LessonPanel({
       if (data?.lesson_plan_id) {
         await loadLessonCards(data.lesson_plan_id);
       }
+      pendingGeneratedSessionRef.current = "";
       if (onResultReady) {
         onResultReady();
       }
@@ -364,9 +402,42 @@ export default function LessonPanel({
   }, [defaultChapter]);
 
   useEffect(() => {
-    if (lessonSessionId) {
-      loadLessonForSession(lessonSessionId);
+    if (prefillContext) {
+      setLessonContext(prefillContext);
     }
+  }, [prefillContext]);
+
+  useEffect(() => {
+    if (!prefilledPlanData || !Array.isArray(prefilledPlanData.steps) || prefilledPlanData.steps.length === 0) {
+      return;
+    }
+
+    setPlan(prefilledPlanData);
+    setArtifactByCard({});
+    setArtifactMetaByCard({});
+    setExpandedSteps({});
+    if (prefilledPlanData?.chapter) {
+      setChapter(prefilledPlanData.chapter);
+    }
+    if (prefilledPlanData?.lesson_plan_id) {
+      loadLessonCards(prefilledPlanData.lesson_plan_id);
+    }
+    onResultReady?.();
+  }, [loadLessonCards, onResultReady, prefilledPlanData]);
+
+  useEffect(() => {
+    if (!autoRunToken) return;
+    skipNextSessionLoadRef.current = true;
+    runGeneratePlan({ reuseSession: false, preferCurrentSession: true });
+  }, [autoRunToken]);
+
+  useEffect(() => {
+    if (!lessonSessionId) return;
+    if (skipNextSessionLoadRef.current) {
+      skipNextSessionLoadRef.current = false;
+      return;
+    }
+    loadLessonForSession(lessonSessionId);
   }, [lessonSessionId, loadLessonForSession]);
 
   useEffect(() => {
@@ -383,11 +454,13 @@ export default function LessonPanel({
     <div className="workspace-panel lesson-panel">
       <div className="workspace-panel__header">
         <div>
-          <div className="workspace-panel__eyebrow">
-            <FiBookOpen />
-            <span>Lessons</span>
+          <div className="workspace-panel__title-row">
+            <h3>Contextual lesson plans</h3>
+            <div className="workspace-panel__eyebrow">
+              <FiBookOpen />
+              <span>Lessons</span>
+            </div>
           </div>
-          <h3>Contextual lesson plans</h3>
           <p>Generate and save lesson plans using your selected Knowledge Base content.</p>
         </div>
         {!isContextViewerVisible && (
@@ -479,6 +552,8 @@ export default function LessonPanel({
                       title: stepLike.title,
                       card_type: stepLike.type,
                       content: stepLike.content,
+                      bullets: stepLike.bullets || [],
+                      numbered: stepLike.numbered || [],
                       status: stepLike.status,
                     };
                 const cardId = card.card_id;
@@ -517,6 +592,8 @@ export default function LessonPanel({
                     {isExpanded && (
                       <div className="lesson-step__content">
                         {card.content && <p>{card.content}</p>}
+                        {renderStructuredList(card.bullets, false)}
+                        {renderStructuredList(card.numbered, true)}
                         {!card.content && (
                           <p className="sidebar-note">No detailed content available for this step.</p>
                         )}

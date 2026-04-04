@@ -28,6 +28,7 @@ export default function Login({ onLogin, sessionExpired = false }) {
   const [registerEmail, setRegisterEmail] = useState("");
   const [registerDob, setRegisterDob] = useState(null);
   const [registerPassword, setRegisterPassword] = useState("");
+  const [registerRole, setRegisterRole] = useState("student");
 
   const [resetEmail, setResetEmail] = useState("");
   const [resetDob, setResetDob] = useState(null);
@@ -153,6 +154,7 @@ export default function Login({ onLogin, sessionExpired = false }) {
           email: registerEmail,
           dob: registerDob.toISOString().slice(0, 10),
           password: registerPassword,
+          role: registerRole,
         }),
       });
 
@@ -223,7 +225,7 @@ export default function Login({ onLogin, sessionExpired = false }) {
         <div>
           <div className="login-hero__eyebrow">
             <GiBrain />
-            <span>Brain-powered study workspace</span>
+            <span>AI-powered learning workspace</span>
           </div>
           <h2>Study in one focused interface.</h2>
           <p>
@@ -430,6 +432,23 @@ export default function Login({ onLogin, sessionExpired = false }) {
                   onChange={(e) => setRegisterPassword(e.target.value)}
                   onKeyDown={handleKeyDown}
                 />
+              </div>
+            </div>
+
+            <div className="login-field">
+              <label htmlFor="registerRole">Register as</label>
+              <div className="login-field__input">
+                <FiBookOpen />
+                <select
+                  id="registerRole"
+                  aria-label="Register as"
+                  value={registerRole}
+                  onChange={(e) => setRegisterRole(e.target.value)}
+                >
+                  <option value="student">Student</option>
+                  <option value="teacher">Teacher</option>
+                  <option value="parent">Parent</option>
+                </select>
               </div>
             </div>
 

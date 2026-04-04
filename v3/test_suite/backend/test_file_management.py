@@ -12,6 +12,7 @@ from fastapi import HTTPException, UploadFile
 from app.modules.file_management import (
     _storage_base_dir,
     _file_sha256,
+    _resolve_kb_absolute_path,
     _safe_name,
     _effective_email,
     _validate_tree_names,
@@ -306,6 +307,11 @@ class TestGetOrCreateUserStorageRoot:
 
 
 class TestContentReferences:
+    def test_make_kb_content_ref_canonicalizes_relative_path(self):
+        canonical = make_kb_content_ref("Class 8/English-1/Text Books/Chapter 1.pdf")
+        variant = make_kb_content_ref("Class 8/English-1/../English-1/Text Books/./Chapter 1.pdf")
+        assert variant == canonical
+
     def test_make_upload_content_ref(self):
         assert make_upload_content_ref(42) == "upload:42"
 
@@ -343,6 +349,56 @@ class TestContentReferences:
     def test_resolve_rejects_invalid_reference(self):
         with pytest.raises(HTTPException):
             resolve_content_reference({"username": "student"}, "not-a-valid-reference")
+
+    def test_resolve_relative_path_reference(self, tmp_path):
+        kb_root = tmp_path / "knowledge_base"
+        chapter = kb_root / "Class 8" / "English-1" / "Text Books"
+        chapter.mkdir(parents=True)
+        pdf_path = chapter / "Chapter 1.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4")
+
+        relative_path = "Class 8/English-1/Text Books/Chapter 1.pdf"
+        with patch("app.modules.file_management._knowledge_base_root", return_value=str(kb_root)):
+            resolved = resolve_content_reference({"username": "student"}, relative_path)
+
+        assert resolved["content_id"] == make_kb_content_ref(relative_path)
+        assert resolved["path"] == str(pdf_path)
+        assert resolved["source"] == "knowledge_base"
+
+    def test_resolve_equivalent_paths_to_single_content_id(self, tmp_path):
+        kb_root = tmp_path / "knowledge_base"
+        chapter = kb_root / "Class 8" / "English-1" / "Text Books"
+        chapter.mkdir(parents=True)
+        pdf_path = chapter / "Chapter 1.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4")
+
+        canonical_rel = "Class 8/English-1/Text Books/Chapter 1.pdf"
+        variant_rel = "Class 8/English-1/../English-1/Text Books/./Chapter 1.pdf"
+
+        with patch("app.modules.file_management._knowledge_base_root", return_value=str(kb_root)):
+            canonical_resolved = resolve_content_reference({"username": "student"}, canonical_rel)
+            variant_resolved = resolve_content_reference({"username": "student"}, variant_rel)
+
+        assert canonical_resolved["path"] == str(pdf_path)
+        assert variant_resolved["path"] == str(pdf_path)
+        assert variant_resolved["content_id"] == canonical_resolved["content_id"]
+
+    def test_resolve_rejects_absolute_path_reference(self):
+        with pytest.raises(HTTPException) as exc:
+            resolve_content_reference({"username": "student"}, "C:/Windows/System32/cmd.exe")
+
+        assert exc.value.status_code == 400
+
+    @patch("app.modules.file_management.os.path.realpath")
+    @patch("app.modules.file_management._knowledge_base_root")
+    def test_resolve_kb_absolute_path_rejects_symlink_escape(self, mock_kb_root, mock_realpath):
+        mock_kb_root.return_value = "/safe/kb"
+        mock_realpath.side_effect = ["/safe/kb", "/outside/secret.pdf"]
+
+        with pytest.raises(HTTPException) as exc:
+            _resolve_kb_absolute_path("Class 8/English-1/Text Books/Chapter 1.pdf")
+
+        assert exc.value.status_code == 403
 
 
 class TestIndexJobLifecycle:

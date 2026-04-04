@@ -2,10 +2,21 @@
 WebSocket authentication utilities
 """
 
+import os
 from typing import Optional
 from http.cookies import SimpleCookie
 from fastapi import WebSocket, status
 from .auth import TOKEN_COOKIE_NAME, verify_token
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+ALLOW_WS_QUERY_TOKEN = _env_flag("ALLOW_WS_QUERY_TOKEN", False)
 
 
 async def get_token_from_websocket(ws: WebSocket) -> Optional[str]:
@@ -14,7 +25,7 @@ async def get_token_from_websocket(ws: WebSocket) -> Optional[str]:
     Priority:
     1. Authorization header during handshake
     2. Subprotocol (token passed as subprotocol suffix after .)
-    3. Query parameter (deprecated, kept for backwards compatibility)
+    3. Query parameter (deprecated, opt-in via ALLOW_WS_QUERY_TOKEN)
     """
     
     # Try to get from headers
@@ -42,8 +53,8 @@ async def get_token_from_websocket(ws: WebSocket) -> Optional[str]:
         if morsel and morsel.value:
             return morsel.value
     
-    # Fallback: query parameter (deprecated)
-    if ws.query_params.get("token"):
+    # Legacy fallback: query parameter is disabled by default.
+    if ALLOW_WS_QUERY_TOKEN and ws.query_params.get("token"):
         return ws.query_params.get("token")
     
     return None

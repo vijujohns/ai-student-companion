@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 async function mockAppApi(page) {
-  await page.route("http://127.0.0.1:8011/**", async (route) => {
+  await page.route("http://127.0.0.1:8000/**", async (route) => {
     const req = route.request();
     const url = new URL(req.url());
     const path = url.pathname;
@@ -225,7 +225,7 @@ test.describe("visual ui regression", () => {
     await page.getByPlaceholder("Password").fill("student123");
     await page.getByRole("button", { name: "Continue" }).click();
 
-    await expect(page.getByRole("button", { name: /New Chat/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /New Chat/i }).first()).toBeVisible();
 
     const selectors = page.locator(".workspace-context-bar select");
     await expect(selectors.first()).toBeVisible();
@@ -250,7 +250,7 @@ test.describe("visual ui regression", () => {
     await page.getByPlaceholder("Password").fill("student123");
     await page.getByRole("button", { name: "Continue" }).click();
 
-    await expect(page.getByRole("button", { name: /New Chat/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /New Chat/i }).first()).toBeVisible();
     const selectors = page.locator(".workspace-context-bar select");
     await expect(selectors.first()).toBeVisible();
     await selectors.nth(0).selectOption({ label: "Class 8" });
@@ -259,7 +259,7 @@ test.describe("visual ui regression", () => {
     await selectors.nth(3).selectOption({ label: "Chapter 1" });
 
     await page.getByRole("button", { name: "Lesson" }).click();
-    await page.getByRole("button", { name: "Generate Plan" }).click();
+    await page.getByRole("button", { name: "New Lesson Plan" }).click();
 
     await expect(page).toHaveScreenshot("visual-lesson-panel.png", {
       fullPage: true,
@@ -277,7 +277,7 @@ test.describe("visual ui regression", () => {
     await page.getByPlaceholder("Password").fill("student123");
     await page.getByRole("button", { name: "Continue" }).click();
 
-    await expect(page.getByRole("button", { name: /New Chat/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /New Chat/i }).first()).toBeVisible();
     const selectors = page.locator(".workspace-context-bar select");
     await expect(selectors.first()).toBeVisible();
     await selectors.nth(0).selectOption({ label: "Class 8" });
@@ -286,7 +286,7 @@ test.describe("visual ui regression", () => {
     await selectors.nth(3).selectOption({ label: "Chapter 1" });
 
     await page.getByRole("button", { name: "Quiz" }).click();
-    await page.getByRole("button", { name: "Generate Quiz" }).click();
+    await page.getByRole("button", { name: "New Quiz" }).click();
 
     await expect(page).toHaveScreenshot("visual-quiz-panel.png", {
       fullPage: true,

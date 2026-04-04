@@ -161,6 +161,26 @@ class TestAuthentication:
         assert logout_resp.status_code == 200
         assert client.get("/auth/session").status_code in (401, 403)
 
+    def test_inactive_account_cannot_login(self, client):
+        """Disabled accounts (is_active=0) must be rejected even with correct password."""
+        from app.modules.db import get_connection
+        from app.modules.user_manager import hash_password
+
+        email = "disabled_e2e@example.com"
+        conn = get_connection()
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO users (username, email, password_hash, role, is_active) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (email, email, hash_password("pass123"), "student", 0),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        resp = client.post("/login", json={"email": email, "password": "pass123"})
+        assert resp.status_code == 401
+
 
 # ══════════════════════════════════════════════════════════════
 # 2. AUTHORIZATION — protected routes reject unauthenticated calls
@@ -254,6 +274,30 @@ class TestSessionManagement:
         assert isinstance(body.get("sessions"), list)
         assert "message" in body
 
+    def test_list_sessions_uses_latest_row_consistently(self, client):
+        from app.modules.db import get_connection
+
+        session_id = str(uuid.uuid4())
+        conn = get_connection()
+        conn.execute(
+            "INSERT INTO chat_history (user_id, session_id, question, answer, session_title, selected_content) VALUES (?, ?, ?, ?, ?, ?)",
+            ("student", session_id, "Q1", "A1", "Z-Older-Title", "old/content"),
+        )
+        conn.execute(
+            "INSERT INTO chat_history (user_id, session_id, question, answer, session_title, selected_content) VALUES (?, ?, ?, ?, ?, ?)",
+            ("student", session_id, "Q2", "A2", "A-Newer-Title", "new/content"),
+        )
+        conn.commit()
+        conn.close()
+
+        resp = client.get("/sessions", headers=self._headers)
+        assert resp.status_code == 200
+        sessions = resp.json().get("sessions", [])
+        row = next((item for item in sessions if item.get("id") == session_id), None)
+        assert row is not None
+        assert row.get("title") == "A-Newer-Title"
+        assert row.get("selected_content") == "new/content"
+
     def test_rename_session(self, client):
         sid = self._create_session(client)
         resp = client.put(
@@ -311,6 +355,26 @@ class TestSessionManagement:
         body = resp.json()
         assert "session_content" in body
         assert "message" in body
+
+    def test_clear_session_content(self, client):
+        from app.modules.db import get_connection
+
+        sid = self._create_session(client)
+        conn = get_connection()
+        conn.execute(
+            "UPDATE chat_history SET session_content=?, selected_content=? WHERE user_id=? AND session_id=?",
+            ("kb:Q2xhc3MtOC9FbmdsaXNoLTEvVGV4dCBCb29rcy9DaGFwdGVyIDEucGRm", "kb:Q2xhc3MtOC9FbmdsaXNoLTEvVGV4dCBCb29rcy9DaGFwdGVyIDEucGRm", "student", sid),
+        )
+        conn.commit()
+        conn.close()
+
+        clear_resp = client.put(f"/sessions/{sid}/content", json={}, headers=self._headers)
+        assert clear_resp.status_code == 200
+        assert clear_resp.json().get("session_content") is None
+
+        get_resp = client.get(f"/sessions/{sid}/content", headers=self._headers)
+        assert get_resp.status_code == 200
+        assert get_resp.json().get("session_content") is None
 
     def test_history_own_session(self, client):
         sid = self._create_session(client)
@@ -397,6 +461,73 @@ class TestQuizAndFlashcardSessionManagement:
         resp = client.delete(f"/flashcards/sessions/{sid}", headers=self._headers)
         assert resp.status_code == 200
         assert resp.json()["status"] == "deleted"
+
+    def test_quiz_latest_returns_404_when_missing(self, client):
+        missing_session = str(uuid.uuid4())
+        resp = client.get(f"/quiz/latest?session_id={missing_session}", headers=self._headers)
+        assert resp.status_code == 404
+
+    def test_quiz_by_id_returns_404_when_missing(self, client):
+        missing_session = str(uuid.uuid4())
+        resp = client.get(f"/quiz/missing-quiz?session_id={missing_session}", headers=self._headers)
+        assert resp.status_code == 404
+
+    def test_flashcards_latest_returns_404_when_missing(self, client):
+        missing_session = str(uuid.uuid4())
+        resp = client.get(f"/flashcards/latest?session_id={missing_session}", headers=self._headers)
+        assert resp.status_code == 404
+
+    def test_generate_flashcards_persists_learning_artifact(self, client):
+        from app.modules.db import get_connection
+        from app.modules.flashcards import FlashcardItem
+
+        session_id = str(uuid.uuid4())
+        with (
+            patch("app.modules.flashcards.resolve_files", return_value=["dummy.pdf"]),
+            patch("app.modules.flashcards.extract_text_from_files", return_value="study material"),
+            patch(
+                "app.modules.flashcards.generate_flashcards_from_text",
+                return_value=[FlashcardItem(question="Q1", answer="A1")],
+            ),
+        ):
+            resp = client.post(
+                "/flashcards/",
+                json={
+                    "class_name": "Class X",
+                    "subject": "Science",
+                    "content_type": "General Knowledge",
+                    "chapter": "Motion",
+                    "num_cards": 1,
+                    "session_id": session_id,
+                },
+                headers=self._headers,
+            )
+
+        assert resp.status_code == 200
+
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT user_id, session_id, artifact_type, title, payload_json, selected_content
+            FROM learning_artifacts
+            WHERE user_id=? AND session_id=? AND artifact_type='FLASHCARD'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            ("student", session_id),
+        )
+        row = cursor.fetchone()
+        conn.close()
+
+        assert row is not None
+        assert row[0] == "student"
+        assert row[1] == session_id
+        assert row[2] == "FLASHCARD"
+        assert row[3] == "Flashcards - Motion"
+        payload = row[4]
+        assert "Q1" in payload and "A1" in payload
+        assert row[5] == "Class X/Science/General Knowledge/Motion"
 
 
 # ══════════════════════════════════════════════════════════════
@@ -558,13 +689,89 @@ class TestSecurityHardening:
         from app.api.routes import _kb_dir
         fake = os.path.join(_kb_dir(), "nonexistent_file.pdf")
         resp = client.get(f"/pdf?path={fake}", headers=self._h)
-        assert resp.status_code == 404
+        assert resp.status_code == 403
+
+    def test_pdf_reference_variants_resolve_same_file(self, client):
+        import base64
+        import os
+
+        from app.api.routes import _kb_dir
+
+        file_name = f"canon-{uuid.uuid4().hex}.pdf"
+        canonical_rel = f"Class 8/General Knowledge/Text Books/{file_name}"
+        variant_rel = f"Class 8/General Knowledge/../General Knowledge/Text Books/./{file_name}"
+
+        full_path = os.path.join(_kb_dir(), *canonical_rel.split("/"))
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        payload = b"%PDF-1.4\n%canonical-test\n"
+
+        try:
+            with open(full_path, "wb") as handle:
+                handle.write(payload)
+
+            # Build a deliberately non-canonical kb: reference.
+            raw = variant_rel.encode("utf-8")
+            variant_content_id = "kb:" + base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+            by_content_id = client.get(f"/pdf?content_id={variant_content_id}", headers=self._h)
+            by_relative_path = client.get(f"/pdf?path={variant_rel}", headers=self._h)
+
+            assert by_content_id.status_code == 200
+            assert by_relative_path.status_code == 200
+            assert by_content_id.content == payload
+            assert by_relative_path.content == payload
+        finally:
+            if os.path.exists(full_path):
+                os.remove(full_path)
 
     # ── Admin-only endpoint rejects students ─────────────────
 
     def test_incremental_reindex_student_forbidden(self, client):
         resp = client.post("/admin/reindex-incremental", headers=self._h)
         assert resp.status_code == 403
+
+    def test_kb_symlink_escape_blocked_in_subjects(self, client):
+        """_safe_kb_path must resolve symlinks (realpath) before the boundary check."""
+        import os
+        import tempfile
+        from app.api.routes import _kb_dir
+
+        kb = _kb_dir()
+        os.makedirs(kb, exist_ok=True)
+
+        with tempfile.TemporaryDirectory() as secret_dir:
+            # Create a symlink inside KB that points outside KB.
+            link_name = "escape-link-test"
+            link_path = os.path.join(kb, link_name)
+            try:
+                if os.path.islink(link_path):
+                    os.unlink(link_path)
+                try:
+                    os.symlink(secret_dir, link_path)
+                except OSError as exc:
+                    pytest.skip(f"Symlink creation requires elevated privileges on this OS: {exc}")
+                resp = client.get(f"/subjects?class_name={link_name}", headers=self._h)
+                # With realpath, the candidate resolves outside KB → 400.
+                assert resp.status_code in (400, 404), (
+                    f"Symlink escape should be blocked, got {resp.status_code}"
+                )
+            finally:
+                if os.path.islink(link_path):
+                    os.unlink(link_path)
+
+    def test_flashcard_request_rejects_extra_fields(self, client):
+        """FlashcardRequest with extra='forbid' must reject unknown keys."""
+        resp = client.post(
+            "/flashcards/",
+            json={
+                "class_name": "Class 8",
+                "subject": "Science",
+                "content_type": "Notes",
+                "unknown_key": "malicious",
+            },
+            headers=self._h,
+        )
+        assert resp.status_code == 422
 
 
 # ══════════════════════════════════════════════════════════════

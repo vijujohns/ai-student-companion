@@ -18,7 +18,13 @@ describe("usePlanSummary", () => {
   });
 
   it("loadPlanSummary populates planSummary from API response", async () => {
-    const fakePlan = { plan_code: "pro", is_trial: false, limits: { ask_count: 100 } };
+    const fakePlan = {
+      plan_code: "pro",
+      is_trial: false,
+      limits: { ask_count: 100 },
+      entitlements: [{ feature_key: "basic_lessons", enabled: true }],
+      classes: [{ class_name: "Class 8", status: "ACTIVE" }],
+    };
     const fakeUsage = { ask_count: 5 };
     const apiFetch = makeApiFetch(fakePlan, fakeUsage);
     const { result } = renderHook(() => usePlanSummary({ apiFetch }));
@@ -30,8 +36,15 @@ describe("usePlanSummary", () => {
     expect(result.current.planSummary).toEqual({
       planCode: "PRO",
       isTrial: false,
+      autoRenew: false,
+      planStartedAt: null,
+      planExpiresAt: null,
+      trialEndsAt: null,
+      billingPeriod: "Annual",
       usage: fakeUsage,
       limits: fakePlan.limits,
+      entitlements: fakePlan.entitlements,
+      classes: fakePlan.classes,
     });
   });
 

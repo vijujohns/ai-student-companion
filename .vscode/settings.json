@@ -24,6 +24,13 @@
         "/^python -m pytest tests/test_websocket\\.py tests/test_rag\\.py tests/test_file_management\\.py -v 2>&1 \\| Select-Object -Last 100$/": {
             "approve": true,
             "matchCommandLine": true
-        }
+        },
+        "npm test": true,
+        "npm start": true,
+        "Test-NetConnection": true,
+        "Get-Process": true,
+        "../test_suite/frontend/unit/panels.test.jsx": true,
+        "../test_suite/frontend/unit/App.test.jsx": true,
+        "npx vitest": true
     }
 }

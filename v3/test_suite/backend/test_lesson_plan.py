@@ -15,6 +15,9 @@ from app.modules.lesson_plan import (
     _extract_json_from_text,
     _steps_from_llm_text,
     _default_steps_with_content,
+    _build_adaptive_steps_with_content,
+    _is_too_extractive,
+    _rewrite_steps_abstractive,
     _normalize_steps,
     _save_lesson_cards,
     generate_lesson_plan,
@@ -48,6 +51,8 @@ class TestDefaultSteps:
             assert "type" in step
             assert "status" in step
             assert "content" in step
+            assert "bullets" in step
+            assert "numbered" in step
             assert step["status"] == "pending"
             assert step["content"] == ""
 
@@ -162,6 +167,21 @@ class TestNormalizeSteps:
         assert isinstance(normalized[0]["type"], str)
         assert isinstance(normalized[0]["content"], str)
 
+    def test_normalize_preserves_structured_lists(self):
+        steps = [
+            {
+                "id": 1,
+                "title": "Intro",
+                "content": "Summary",
+                "bullets": ["Point one", "Point two"],
+                "numbered": ["First step"],
+            }
+        ]
+
+        normalized = _normalize_steps(steps)
+        assert normalized[0]["bullets"] == ["Point one.", "Point two."]
+        assert normalized[0]["numbered"] == ["First step."]
+
     def test_normalize_adds_missing_fields(self):
         """Test that normalize adds missing fields with defaults."""
         steps = [{}]
@@ -179,8 +199,8 @@ class TestGenerateLessonPlan:
         mock_retrieve.return_value = ["chunk1", "chunk2"]
         llm_response = json.dumps({
             "steps": [
-                {"title": "Intro", "type": "concept", "content": "content1"},
-                {"title": "Key Points", "type": "concept", "content": "content2"},
+                {"title": "Intro", "type": "concept", "content": "content1", "bullets": ["b1"], "numbered": []},
+                {"title": "Key Points", "type": "concept", "content": "content2", "bullets": ["b2"], "numbered": []},
             ]
         })
         mock_generate.return_value = llm_response
@@ -192,6 +212,7 @@ class TestGenerateLessonPlan:
         assert len(plan["steps"]) == 2
         assert plan["session_id"] == "session1"
         assert "lesson_plan_id" in plan
+        assert plan["steps"][0]["bullets"] == ["b1."]
 
     @patch("app.modules.lesson_plan.retrieve_chunks")
     @patch("app.modules.lesson_plan.generate_response")
@@ -222,6 +243,61 @@ class TestGenerateLessonPlan:
 
         assert len(plan["steps"]) == 5
         assert plan["steps"][0]["title"] == "Introduction"
+
+    def test_adaptive_fallback_generates_structured_content(self):
+        chunks = [
+            "Kerala has varied landscapes including hills, backwaters, and coastal plains.",
+            "The state is known for festivals, literacy, and traditional arts.",
+            "People also study industries, transport, and cultural practices across districts.",
+        ]
+
+        steps = _build_adaptive_steps_with_content(chunks, "Kerala")
+
+        assert len(steps) >= 1
+        assert any(step["content"] for step in steps)
+        assert any(step["bullets"] or step["numbered"] for step in steps)
+
+
+class TestAbstractiveRewrite:
+    def test_is_too_extractive_detects_heavy_copy(self):
+        source = "Kerala has rivers, backwaters, forests, and coastal plains with rich biodiversity."
+        copied = "Kerala has rivers, backwaters, forests, and coastal plains with rich biodiversity."
+        assert _is_too_extractive(source, copied, [], []) is True
+
+    @patch("app.modules.lesson_plan.generate_response")
+    def test_rewrite_steps_abstractive_accepts_paraphrase(self, mock_generate):
+        candidate_steps = [
+            {
+                "id": 1,
+                "title": "Kerala Geography",
+                "type": "concept",
+                "status": "pending",
+                "content": "Original",
+                "_source": "Kerala includes hills, plains, and backwaters across districts.",
+            }
+        ]
+        mock_generate.return_value = json.dumps(
+            {
+                "steps": [
+                    {
+                        "id": 1,
+                        "title": "Kerala Geography",
+                        "type": "concept",
+                        "content": "This topic explains Kerala's varied landforms in simple terms.",
+                        "bullets": [
+                            "Different regions have different physical features",
+                            "Water systems shape local life",
+                        ],
+                        "numbered": [],
+                    }
+                ]
+            }
+        )
+
+        rewritten = _rewrite_steps_abstractive("Kerala", candidate_steps)
+        assert len(rewritten) == 1
+        assert rewritten[0]["content"]
+        assert rewritten[0]["bullets"]
 
 
 class TestListLessonSessions:
@@ -354,8 +430,8 @@ class TestGetLessonPlanCards:
         cursor.fetchone.return_value = (1,)
         # Second call gets cards
         cursor.fetchall.return_value = [
-            (1, 1, "Card 1", "concept", json.dumps({"content": "Content 1"}), "pending", None),
-            (2, 2, "Card 2", "example", json.dumps({"content": "Content 2"}), "pending", None),
+            (1, 1, "Card 1", "concept", json.dumps({"content": "Content 1", "bullets": ["Point 1"], "numbered": []}), "pending", None),
+            (2, 2, "Card 2", "example", json.dumps({"content": "Content 2", "bullets": [], "numbered": ["Step 1"]}), "pending", None),
         ]
         
         mock_conn.return_value.cursor.return_value = cursor
@@ -365,6 +441,8 @@ class TestGetLessonPlanCards:
         assert len(cards) == 2
         assert cards[0]["title"] == "Card 1"
         assert cards[1]["card_type"] == "example"
+        assert cards[0]["bullets"] == ["Point 1."]
+        assert cards[1]["numbered"] == ["Step 1."]
 
     @patch("app.modules.lesson_plan.get_connection")
     def test_get_lesson_plan_cards_unauthorized(self, mock_conn):
@@ -417,7 +495,7 @@ class TestGetCardForUser:
             99,  # card_id
             "Step 1",  # title
             "concept",  # card_type
-            json.dumps({"content": "Learning content"})  # content_json
+            json.dumps({"content": "Learning content", "bullets": ["Point 1"], "numbered": ["Step A"]})  # content_json
         )
         
         mock_conn.return_value.cursor.return_value = cursor
@@ -427,6 +505,8 @@ class TestGetCardForUser:
         assert card is not None
         assert card["card_id"] == 99
         assert card["content"] == "Learning content"
+        assert card["bullets"] == ["Point 1."]
+        assert card["numbered"] == ["Step A."]
 
     @patch("app.modules.lesson_plan.get_connection")
     def test_get_card_for_user_not_found(self, mock_conn):

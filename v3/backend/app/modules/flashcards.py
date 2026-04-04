@@ -1,19 +1,40 @@
 # flashcards.py
 import os
+import json
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends
-from ..modules.dependencies import require_quota
-from pydantic import BaseModel
+from ..modules.dependencies import get_current_user
+from pydantic import BaseModel, ConfigDict
 from .model_manager import generate_response
 from .db import get_connection
-from .policy import increment_usage
+from .policy import consume_quota, release_usage
+from .messages import get_message
+from .analytics import log_activity
 #from .history import save_flashcards
 from .ingestion import extract_text_from_pdf
 
 router = APIRouter(prefix="/flashcards", tags=["flashcards"])
 
+
+def _consume_quota_or_raise(user_id: str, action: str) -> None:
+    allowed, message_id = consume_quota(user_id, action)
+    if allowed:
+        return
+
+    msg = get_message(message_id)
+    raise HTTPException(
+        status_code=429,
+        detail={
+            "message_id": msg["message_id"],
+            "level": msg["level"],
+            "message": msg["user_text"],
+        },
+    )
+
 # ---------- Request / Response Schemas ----------
 class FlashcardRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     class_name: str                 # e.g., "Class 8"
     subject: str                    # e.g., "English-1"
     content_type: str               # e.g., "Text Books", "Notes", "QuestionPapers"
@@ -91,36 +112,62 @@ def generate_flashcards_from_text(text: str, num_cards: int) -> List[FlashcardIt
             q, a = None, None
     return flashcards
 
-def _save_flashcards_to_db(session_id: str, flashcards: List[FlashcardItem]):
-    """Persist flashcards to DB for a given session."""
+def _save_flashcards_artifact(user_id: str, session_id: str, title: str, flashcards: List[FlashcardItem], selected_content: Optional[str] = None):
+    """Persist flashcards as a durable learning artifact for a given user/session."""
     conn = get_connection()
     cursor = conn.cursor()
-    for card in flashcards:
-        cursor.execute(
-            "INSERT INTO flashcards (session_id, question, answer) VALUES (?, ?, ?)",
-            (session_id, card.question, card.answer)
-        )
+    payload = {
+        "flashcards": [
+            {
+                "question": card.question,
+                "answer": card.answer,
+            }
+            for card in flashcards
+        ]
+    }
+    cursor.execute(
+        """
+        INSERT INTO learning_artifacts
+        (user_id, session_id, lesson_plan_id, card_id, artifact_type, title, payload_json, selected_content, created_at, updated_at)
+        VALUES (?, ?, NULL, NULL, 'FLASHCARD', ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """,
+        (user_id, session_id, title, json.dumps(payload), selected_content),
+    )
     conn.commit()
     conn.close()
 
 
 # ---------- API Endpoint ----------
 @router.post("/", response_model=FlashcardResponse)
-async def generate_flashcards(req: FlashcardRequest, user=Depends(require_quota("flashcard"))):
+async def generate_flashcards(req: FlashcardRequest, user=Depends(get_current_user)):
     """Generate flashcards — requires authentication."""
     BASE_KB = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../knowledge_base"))
     files = resolve_files(BASE_KB, req)
     if not files:
         raise HTTPException(status_code=404, detail="No matching files found for flashcard generation.")
 
-    text = extract_text_from_files(files)
-    flashcards = generate_flashcards_from_text(text, req.num_cards or 10)
-    increment_usage(user["username"], "flashcard")
+    _consume_quota_or_raise(user["username"], "flashcard")
+    try:
+        text = extract_text_from_files(files)
+        flashcards = generate_flashcards_from_text(text, req.num_cards or 10)
 
-    if req.session_id:
+        if req.session_id:
+            title = f"Flashcards - {req.chapter}" if req.chapter else f"Flashcards - {req.subject}"
+            selected_content = f"{req.class_name}/{req.subject}/{req.content_type}/{req.chapter}" if req.chapter else f"{req.class_name}/{req.subject}/{req.content_type}"
+            _save_flashcards_artifact(user["username"], req.session_id, title, flashcards, selected_content)
+
         try:
-            _save_flashcards_to_db(req.session_id, flashcards)
+            log_activity(
+                user["username"],
+                "flashcard",
+                req.subject or "",
+                req.chapter or req.subject or "",
+                120,
+            )
         except Exception:
-            pass  # non-fatal: still return flashcards even if save fails
+            pass
+    except Exception:
+        release_usage(user["username"], "flashcard")
+        raise
 
     return FlashcardResponse(flashcards=flashcards)

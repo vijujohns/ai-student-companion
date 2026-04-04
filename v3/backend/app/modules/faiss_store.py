@@ -9,6 +9,8 @@ import os
 import pickle
 import json
 
+from ..core.config_loader import get_rag_config
+
 # Paths
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -17,8 +19,30 @@ INDEX_FILE = os.path.join(DATA_DIR, "faiss.index")
 DOC_FILE = os.path.join(DATA_DIR, "documents.pkl")
 META_FILE = os.path.join(DATA_DIR, "metadata.json")
 
+
+def _load_embedding_model():
+    rag_cfg = get_rag_config()
+    configured = str(rag_cfg.get("embedding_model") or "").strip()
+    candidates = []
+    for name in (configured, "BAAI/bge-base-en-v1.5", "all-MiniLM-L6-v2"):
+        if name and name not in candidates:
+            candidates.append(name)
+
+    last_error = None
+    for model_name in candidates:
+        try:
+            loaded_model = SentenceTransformer(model_name)
+            print(f"✅ Embedding model loaded: {model_name}")
+            return loaded_model, model_name
+        except Exception as exc:
+            last_error = exc
+            print(f"⚠️ Failed to load embedding model '{model_name}', trying fallback: {exc}")
+
+    raise RuntimeError("Unable to load any sentence-transformer embedding model") from last_error
+
+
 # Model
-model = SentenceTransformer("all-MiniLM-L6-v2")
+model, EMBEDDING_MODEL_NAME = _load_embedding_model()
 embedding_dim = model.get_sentence_embedding_dimension()
 
 # FAISS
@@ -78,7 +102,7 @@ def _reset_store():
 
 def search(query, filter_path=None, top_k=4, search_k=8):
     if len(documents) == 0:
-        return ["No documents available"]
+        return []
 
     q = model.encode([query])
     D, I = index.search(np.array(q), max(search_k, top_k))
@@ -117,7 +141,7 @@ def search(query, filter_path=None, top_k=4, search_k=8):
     results = [text for _, text in scored_results[:top_k]]
 
     if not results:
-        return ["No relevant context found for selected content"]
+        return []
 
     return results
 
@@ -161,49 +185,11 @@ def load_index():
         print("⚠️ No existing index found")
 
 
-def load_knowledge_base(force_reindex=False):
-    from .ingestion import ingest_pdf  # ✅ lazy import
+# Backward-compat alias retained for older tests/callers that still patch
+# app.modules.faiss_store.load_knowledge_base after the orchestration moved to kb_sync.
+def load_knowledge_base(force_reindex: bool = False):
+    from .kb_sync import load_knowledge_base as _load_knowledge_base
 
-    kb_path = os.path.join(BASE_DIR, "knowledge_base")
+    return _load_knowledge_base(force_reindex=force_reindex)
 
-    if not os.path.exists(kb_path):
-        print("❌ Knowledge base folder not found")
-        return
 
-    print(f"📂 Scanning KB: {kb_path}")
-
-    metadata = load_metadata()
-    if force_reindex:
-        print("♻️ Starting full reindex")
-        _reset_store()
-        metadata = {}
-
-    updated_meta = {}
-
-    current_pdf_paths = set()
-
-    for root, _, files in os.walk(kb_path):
-        for file in files:
-            if file.lower().endswith(".pdf"):
-                full_path = os.path.join(root, file)
-                current_pdf_paths.add(full_path)
-
-                last_modified = os.path.getmtime(full_path)
-                updated_meta[full_path] = last_modified
-
-                if force_reindex or full_path not in metadata or metadata[full_path] != last_modified:
-                    print(f"🔄 Re-indexing: {file}")
-                    _remove_docs_for_source(full_path)
-                    ingest_pdf(full_path)
-
-    # Remove deleted PDFs from the in-memory index during incremental updates.
-    if not force_reindex:
-        deleted = set(metadata.keys()) - current_pdf_paths
-        for path in deleted:
-            _remove_docs_for_source(path)
-
-    save_metadata(updated_meta)
-    save_index()
-
-    mode = "full" if force_reindex else "incremental"
-    print(f"✅ Knowledge base updated ({mode})")

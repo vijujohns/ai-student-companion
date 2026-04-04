@@ -7,8 +7,9 @@ from pydantic import ValidationError
 from app.schemas.request import (
     LoginRequest, AskRequest, RenameSessionRequest, SetSessionContentRequest,
     LessonPlanCreateRequest, LessonProgressRequest, QuizGenerateRequest,
-    QuizSubmitRequest, ArtifactGenerateRequest
+    QuizSubmitRequest, ArtifactGenerateRequest, SubscriptionActivateRequest
 )
+from app.modules.flashcards import FlashcardRequest
 
 
 class TestLoginRequestValidation:
@@ -61,6 +62,10 @@ class TestAskRequestValidation:
         assert req.query == "Explain gravity"
         assert req.session_id == "uuid-123"
         assert req.model_name == "tinyllama"
+
+    def test_ask_accepts_content_id(self):
+        req = AskRequest(query="Explain gravity", content_id="upload:7")
+        assert req.content_id == "upload:7"
     
     def test_ask_missing_query(self):
         """Missing query should fail"""
@@ -103,13 +108,13 @@ class TestSetSessionContentRequestValidation:
         req = SetSessionContentRequest(content_id="upload:7")
         assert req.content_id == "upload:7"
 
-    def test_accepts_legacy_path_for_migration(self):
-        req = SetSessionContentRequest(path="D:/fake/chapter1.pdf")
-        assert req.path == "D:/fake/chapter1.pdf"
-
-    def test_requires_content_id_or_path(self):
+    def test_rejects_unknown_field_path(self):
         with pytest.raises(ValidationError):
-            SetSessionContentRequest()
+            SetSessionContentRequest(path="Class 8/English-1/Text Books/Chapter 1.pdf")
+
+    def test_allows_clear_payload(self):
+        req = SetSessionContentRequest()
+        assert req.content_id is None
 
 
 class TestLessonProgressRequestValidation:
@@ -183,6 +188,33 @@ class TestQuizAndArtifactContextValidation:
     def test_artifact_generate_request_rejects_long_context(self):
         with pytest.raises(ValidationError):
             ArtifactGenerateRequest(context="x" * 1001)
+
+
+class TestFlashcardRequestValidation:
+    def test_valid_flashcard_request(self):
+        req = FlashcardRequest(class_name="Class 8", subject="English-1", content_type="Notes")
+        assert req.class_name == "Class 8"
+
+    def test_rejects_unknown_field(self):
+        """extra='forbid' should reject unknown fields."""
+        with pytest.raises(ValidationError):
+            FlashcardRequest(class_name="Class 8", subject="English-1", content_type="Notes", unknown_field="bad")
+
+
+class TestSubscriptionActivateRequestValidation:
+    def test_valid_activate_request(self):
+        req = SubscriptionActivateRequest(
+            class_names=["Class 8"],
+            promo_code="WELCOME10",
+            auto_renew=True,
+            payment_reference="txn-111",
+        )
+        assert req.class_names == ["Class 8"]
+        assert req.payment_reference == "txn-111"
+
+    def test_activate_request_rejects_blank_classes(self):
+        with pytest.raises(ValidationError):
+            SubscriptionActivateRequest(class_names=["   "], auto_renew=False)
 
 
 if __name__ == "__main__":

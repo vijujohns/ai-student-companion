@@ -8,6 +8,11 @@
 
 import settings from "../../../configs/settings.json";
 
+const OFFLINE_MUTATION_QUEUE_KEY = "offline_mutation_queue_v1";
+const OFFLINE_GET_CACHE_KEY = "offline_get_cache_v1";
+const OFFLINE_QUEUE_MAX = 120;
+const OFFLINE_CACHE_MAX = 180;
+
 function resolveApiBaseUrl() {
   const backendCfg = settings?.network?.backend || {};
   const protocol = backendCfg.protocol;
@@ -35,6 +40,145 @@ export function clearStoredSessionState() {
   localStorage.removeItem("role");
 }
 
+function canUseNavigatorOnline() {
+  return typeof navigator !== "undefined" && typeof navigator.onLine === "boolean";
+}
+
+function isOnlineNow() {
+  return canUseNavigatorOnline() ? navigator.onLine : true;
+}
+
+function readJsonStorage(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJsonStorage(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Ignore storage quota/runtime failures.
+  }
+}
+
+function getMethod(options = {}) {
+  return String(options.method || "GET").toUpperCase();
+}
+
+function buildRequestUrl(path) {
+  return `${API_BASE_URL}${path}`;
+}
+
+function buildGetCacheKey(path) {
+  return `${path}::${localStorage.getItem("username") || "anonymous"}`;
+}
+
+function cacheSuccessfulGet(path, payload) {
+  const cache = readJsonStorage(OFFLINE_GET_CACHE_KEY, {});
+  cache[buildGetCacheKey(path)] = {
+    payload,
+    ts: Date.now(),
+  };
+  const keys = Object.keys(cache);
+  if (keys.length > OFFLINE_CACHE_MAX) {
+    const overflow = keys
+      .sort((a, b) => (cache[a]?.ts || 0) - (cache[b]?.ts || 0))
+      .slice(0, keys.length - OFFLINE_CACHE_MAX);
+    for (const key of overflow) delete cache[key];
+  }
+  writeJsonStorage(OFFLINE_GET_CACHE_KEY, cache);
+}
+
+function getCachedGetResponse(path) {
+  const cache = readJsonStorage(OFFLINE_GET_CACHE_KEY, {});
+  const cached = cache[buildGetCacheKey(path)];
+  if (!cached?.payload) return null;
+  return new Response(JSON.stringify(cached.payload), {
+    status: 200,
+    headers: {
+      "Content-Type": "application/json",
+      "X-Offline-Cache": "1",
+    },
+  });
+}
+
+function getMutationQueue() {
+  return readJsonStorage(OFFLINE_MUTATION_QUEUE_KEY, []);
+}
+
+function saveMutationQueue(items) {
+  const next = Array.isArray(items) ? items.slice(-OFFLINE_QUEUE_MAX) : [];
+  writeJsonStorage(OFFLINE_MUTATION_QUEUE_KEY, next);
+  window.dispatchEvent(new CustomEvent("offline:queue-updated", { detail: { pending: next.length } }));
+}
+
+function queueOfflineMutation(path, options, headers) {
+  const method = getMethod(options);
+  if (method === "GET" || method === "HEAD") return false;
+  const queue = getMutationQueue();
+  queue.push({
+    path,
+    method,
+    body: options?.body || null,
+    headers: headers || {},
+    queuedAt: Date.now(),
+  });
+  saveMutationQueue(queue);
+  return true;
+}
+
+export function getOfflinePendingCount() {
+  return getMutationQueue().length;
+}
+
+export async function flushOfflineMutationQueue() {
+  if (!isOnlineNow()) return { flushed: 0, remaining: getOfflinePendingCount() };
+
+  const queue = getMutationQueue();
+  if (!queue.length) return { flushed: 0, remaining: 0 };
+
+  const remaining = [];
+  let flushed = 0;
+
+  for (const job of queue) {
+    try {
+      const res = await fetch(buildRequestUrl(job.path), {
+        method: job.method,
+        credentials: "include",
+        headers: job.headers || {},
+        body: job.body,
+      });
+      if (!res.ok) {
+        // Keep 5xx and transport-like retries queued; drop 4xx.
+        if (res.status >= 500) remaining.push(job);
+        continue;
+      }
+      flushed += 1;
+    } catch {
+      remaining.push(job);
+    }
+  }
+
+  saveMutationQueue(remaining);
+  return { flushed, remaining: remaining.length };
+}
+
+export function startOfflineSyncLoop() {
+  const onOnline = async () => {
+    const result = await flushOfflineMutationQueue();
+    window.dispatchEvent(new CustomEvent("offline:sync-finished", { detail: result }));
+  };
+  window.addEventListener("online", onOnline);
+  if (isOnlineNow()) {
+    onOnline();
+  }
+  return () => window.removeEventListener("online", onOnline);
+}
+
 /**
  * Drop-in replacement for fetch() that:
  *  - Automatically injects the Bearer token from localStorage
@@ -47,17 +191,64 @@ export function clearStoredSessionState() {
 export async function apiFetch(path, options = {}) {
   const { headers: optionHeaders, skipSessionExpiredEvent = false, ...fetchOptions } = options;
   const token = localStorage.getItem("token");
+  const method = getMethod(fetchOptions);
 
   const headers = {
     ...(optionHeaders || {}),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
 
-  const res = await fetch(`${API_BASE_URL}${path}`, {
-    ...fetchOptions,
-    credentials: "include",
-    headers,
-  });
+  if (!isOnlineNow()) {
+    if (method === "GET") {
+      const cached = getCachedGetResponse(path);
+      if (cached) return cached;
+    }
+    const queued = queueOfflineMutation(path, fetchOptions, headers);
+    if (queued) {
+      return new Response(
+        JSON.stringify({ queued: true, offline: true, message: "Request queued for sync." }),
+        {
+          status: 202,
+          headers: { "Content-Type": "application/json", "X-Offline-Queued": "1" },
+        }
+      );
+    }
+  }
+
+  let res;
+  try {
+    res = await fetch(buildRequestUrl(path), {
+      ...fetchOptions,
+      credentials: "include",
+      headers,
+    });
+  } catch (err) {
+    if (method === "GET") {
+      const cached = getCachedGetResponse(path);
+      if (cached) return cached;
+    }
+    const queued = queueOfflineMutation(path, fetchOptions, headers);
+    if (queued) {
+      return new Response(
+        JSON.stringify({ queued: true, offline: true, message: "Request queued for sync." }),
+        {
+          status: 202,
+          headers: { "Content-Type": "application/json", "X-Offline-Queued": "1" },
+        }
+      );
+    }
+    throw err;
+  }
+
+  if (res.ok && method === "GET") {
+    try {
+      const clone = res.clone();
+      const payload = await clone.json();
+      cacheSuccessfulGet(path, payload);
+    } catch {
+      // Ignore non-JSON payloads.
+    }
+  }
 
   if (res.status === 401 && !skipSessionExpiredEvent) {
     dispatchSessionExpired();

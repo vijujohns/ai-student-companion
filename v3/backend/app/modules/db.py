@@ -296,6 +296,95 @@ def init_db():
             changes_json TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS subscription_class_rates (
+            class_name TEXT PRIMARY KEY,
+            annual_price_cents INTEGER NOT NULL,
+            currency TEXT NOT NULL DEFAULT 'INR',
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS subscription_promotions (
+            code TEXT PRIMARY KEY,
+            discount_type TEXT NOT NULL,
+            discount_value INTEGER NOT NULL,
+            description TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            expires_at TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS plan_feature_entitlements (
+            plan_code TEXT NOT NULL,
+            feature_key TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 0,
+            hint_text TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (plan_code, feature_key)
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS user_class_subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            class_name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'ACTIVE',
+            annual_price_cents INTEGER NOT NULL DEFAULT 0,
+            currency TEXT NOT NULL DEFAULT 'INR',
+            promo_code TEXT,
+            started_at TEXT,
+            expires_at TEXT,
+            auto_renew INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS assessment_papers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            session_id TEXT,
+            paper_type TEXT NOT NULL DEFAULT 'QUESTION_PAPER',
+            subject TEXT,
+            class_name TEXT,
+            difficulty TEXT DEFAULT 'mixed',
+            mode TEXT DEFAULT 'practice',
+            paper_json TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS learning_time_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            activity_type TEXT NOT NULL,
+            subject TEXT DEFAULT '',
+            chapter TEXT DEFAULT '',
+            duration_seconds INTEGER DEFAULT 0,
+            logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS user_preferences (
+            user_id TEXT PRIMARY KEY,
+            preferred_language TEXT NOT NULL DEFAULT 'en',
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS app_settings (
+            setting_key TEXT PRIMARY KEY,
+            setting_value TEXT NOT NULL,
+            updated_by TEXT DEFAULT 'system',
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
         """
     ]
 
@@ -311,7 +400,15 @@ def init_db():
     migrate_file_management_schema()
     migrate_lesson_card_schema()
     migrate_profile_schema()
+    migrate_selected_content_schema()
+    migrate_subscription_schema()
+    migrate_assessment_schema()
+    migrate_progress_analytics_schema()
+    migrate_preferences_schema()
+    migrate_app_settings_schema()
+    migrate_relationships_schema()
     seed_message_catalog()
+    seed_subscription_catalog()
 
     # Initialize default users
     try:
@@ -454,6 +551,37 @@ def migrate_profile_schema():
             conn.close()
 
 
+def migrate_selected_content_schema():
+    """Ensure selected_content columns exist for backward-compatible session lists."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        targets = [
+            ("chat_history", "selected_content", "TEXT"),
+            ("lesson_quizzes", "selected_content", "TEXT"),
+            ("learning_artifacts", "selected_content", "TEXT"),
+        ]
+
+        for table, column, sql_type in targets:
+            cursor.execute(f"PRAGMA table_info({table})")
+            existing = {row[1] for row in cursor.fetchall()}
+            if column not in existing:
+                cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}")
+
+        conn.commit()
+    except Exception as e:
+        print(f"⚠️ Selected-content schema migration warning: {e}")
+        traceback.print_exc()
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
 def seed_message_catalog():
     """Seed default user-facing messages for traceability."""
     rows = [
@@ -487,6 +615,163 @@ def seed_message_catalog():
         conn.commit()
     except Exception as e:
         print(f"⚠️ Message catalog seed warning: {e}")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+def migrate_subscription_schema():
+    """Ensure subscription pricing, promotions, and entitlement tables exist."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS subscription_class_rates (
+                class_name TEXT PRIMARY KEY,
+                annual_price_cents INTEGER NOT NULL,
+                currency TEXT NOT NULL DEFAULT 'INR',
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS subscription_promotions (
+                code TEXT PRIMARY KEY,
+                discount_type TEXT NOT NULL,
+                discount_value INTEGER NOT NULL,
+                description TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                expires_at TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS plan_feature_entitlements (
+                plan_code TEXT NOT NULL,
+                feature_key TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                hint_text TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (plan_code, feature_key)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_class_subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                class_name TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'ACTIVE',
+                annual_price_cents INTEGER NOT NULL DEFAULT 0,
+                currency TEXT NOT NULL DEFAULT 'INR',
+                promo_code TEXT,
+                started_at TEXT,
+                expires_at TEXT,
+                auto_renew INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.commit()
+    except Exception as e:
+        print(f"⚠️ Subscription schema migration warning: {e}")
+        traceback.print_exc()
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+def seed_subscription_catalog():
+    """Seed starter class pricing, promotions, and plan feature entitlements."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        class_rows = [
+            ("MyDocs", 0, "INR", 1),
+            ("Class 8", 49900, "INR", 1),
+            ("Class 9", 54900, "INR", 1),
+            ("Class X", 59900, "INR", 1),
+            ("Class 10", 59900, "INR", 1),
+            ("Class 11", 69900, "INR", 1),
+            ("Class 12", 74900, "INR", 1),
+        ]
+        cursor.executemany(
+            """
+            INSERT OR IGNORE INTO subscription_class_rates
+            (class_name, annual_price_cents, currency, is_active)
+            VALUES (?, ?, ?, ?)
+            """,
+            class_rows,
+        )
+
+        promo_rows = [
+            ("WELCOME10", "percent", 10, "Welcome discount", 1, None),
+            ("SAVE500", "fixed", 50000, "Flat 500 off", 1, None),
+        ]
+        cursor.executemany(
+            """
+            INSERT OR IGNORE INTO subscription_promotions
+            (code, discount_type, discount_value, description, is_active, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            promo_rows,
+        )
+
+        entitlement_rows = [
+            ("free", "basic_lessons", 1, "Basic lesson plans are included."),
+            ("free", "progress_tracking", 1, "Progress tracking is available on the free trial."),
+            ("free", "subject_level_quiz", 0, "Upgrade to Pro for subject-level quiz generation."),
+            ("free", "advanced_analytics", 0, "Upgrade to Pro for advanced analytics."),
+            ("free", "adaptive_difficulty", 0, "Upgrade to Premium for adaptive difficulty."),
+            ("free", "collaboration", 0, "Upgrade to Premium for collaboration features."),
+            ("free", "multilingual_support", 0, "Upgrade to Premium for multilingual learning support."),
+            ("pro", "basic_lessons", 1, "Included in Pro."),
+            ("pro", "progress_tracking", 1, "Included in Pro."),
+            ("pro", "subject_level_quiz", 1, "Included in Pro."),
+            ("pro", "advanced_analytics", 1, "Included in Pro."),
+            ("pro", "adaptive_difficulty", 0, "Upgrade to Premium for adaptive difficulty."),
+            ("pro", "collaboration", 0, "Upgrade to Premium for collaboration features."),
+            ("pro", "multilingual_support", 0, "Upgrade to Premium for multilingual learning support."),
+            ("premium", "basic_lessons", 1, "Included in Premium."),
+            ("premium", "progress_tracking", 1, "Included in Premium."),
+            ("premium", "subject_level_quiz", 1, "Included in Premium."),
+            ("premium", "advanced_analytics", 1, "Included in Premium."),
+            ("premium", "adaptive_difficulty", 1, "Included in Premium."),
+            ("premium", "collaboration", 1, "Included in Premium."),
+            ("premium", "multilingual_support", 1, "Included in Premium."),
+        ]
+        cursor.executemany(
+            """
+            INSERT OR IGNORE INTO plan_feature_entitlements
+            (plan_code, feature_key, enabled, hint_text)
+            VALUES (?, ?, ?, ?)
+            """,
+            entitlement_rows,
+        )
+
+        conn.commit()
+    except Exception as e:
+        print(f"⚠️ Subscription catalog seed warning: {e}")
+        traceback.print_exc()
     finally:
         if cursor:
             cursor.close()
@@ -772,3 +1057,211 @@ def safe_fetch(query, params=None):
         print(f"❌ Failed to fetch data: {e}")
         traceback.print_exc()
     return []
+
+
+def migrate_assessment_schema():
+    """
+    Add assessment_papers table if not present (safe to run on any existing DB).
+    """
+    execute_query(
+        """
+        CREATE TABLE IF NOT EXISTS assessment_papers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            session_id TEXT,
+            paper_type TEXT NOT NULL DEFAULT 'QUESTION_PAPER',
+            subject TEXT,
+            class_name TEXT,
+            difficulty TEXT DEFAULT 'mixed',
+            mode TEXT DEFAULT 'practice',
+            paper_json TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """,
+        commit=True,
+        raise_on_error=True,
+    )
+
+
+def migrate_preferences_schema():
+    """Add user_preferences table if not present and backfill newer preference fields."""
+    execute_query(
+        """
+        CREATE TABLE IF NOT EXISTS user_preferences (
+            user_id TEXT PRIMARY KEY,
+            preferred_language TEXT NOT NULL DEFAULT 'en',
+            reminder_settings TEXT DEFAULT '{}',
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """,
+        commit=True,
+        raise_on_error=True,
+    )
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(user_preferences)")
+        columns = {row[1] for row in cursor.fetchall()}
+        if "reminder_settings" not in columns:
+            cursor.execute("ALTER TABLE user_preferences ADD COLUMN reminder_settings TEXT DEFAULT '{}' ")
+            conn.commit()
+    finally:
+        conn.close()
+
+
+def migrate_app_settings_schema():
+    """Add the app_settings table used for global admin-controlled behavior."""
+    execute_query(
+        """
+        CREATE TABLE IF NOT EXISTS app_settings (
+            setting_key TEXT PRIMARY KEY,
+            setting_value TEXT NOT NULL,
+            updated_by TEXT DEFAULT 'system',
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """,
+        commit=True,
+        raise_on_error=True,
+    )
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT setting_value FROM app_settings WHERE setting_key=? LIMIT 1",
+            ("active_model_profile",),
+        )
+        if not cursor.fetchone():
+            cursor.execute(
+                """
+                INSERT INTO app_settings (setting_key, setting_value, updated_by, updated_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                ("active_model_profile", "balanced", "system"),
+            )
+            conn.commit()
+    finally:
+        conn.close()
+
+
+def migrate_progress_analytics_schema():
+    """Add learning_time_log and mastery_scores tables if not present."""
+    execute_query(
+        """
+        CREATE TABLE IF NOT EXISTS learning_time_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            activity_type TEXT NOT NULL,
+            subject TEXT DEFAULT '',
+            chapter TEXT DEFAULT '',
+            duration_seconds INTEGER DEFAULT 0,
+            logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """,
+        commit=True,
+        raise_on_error=True,
+    )
+    execute_query(
+        """
+        CREATE TABLE IF NOT EXISTS mastery_scores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            chapter TEXT NOT NULL DEFAULT '',
+            mastery_pct REAL NOT NULL DEFAULT 0.0,
+            quizzes_taken INTEGER NOT NULL DEFAULT 0,
+            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, subject, chapter)
+        );
+        """,
+        commit=True,
+        raise_on_error=True,
+    )
+
+
+def migrate_relationships_schema():
+    """Add teacher/parent relationship and collaboration note tables if not present."""
+    execute_query(
+        """
+        CREATE TABLE IF NOT EXISTS student_relationships (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_user_id TEXT NOT NULL,
+            related_user_id TEXT NOT NULL,
+            relation_role TEXT NOT NULL,
+            relation_label TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(student_user_id, related_user_id, relation_role)
+        );
+        """,
+        commit=True,
+        raise_on_error=True,
+    )
+    execute_query(
+        """
+        CREATE TABLE IF NOT EXISTS collaboration_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_user_id TEXT NOT NULL,
+            author_user_id TEXT NOT NULL,
+            author_role TEXT NOT NULL,
+            note_text TEXT NOT NULL,
+            visibility TEXT NOT NULL DEFAULT 'all',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """,
+        commit=True,
+        raise_on_error=True,
+    )
+    execute_query(
+        """
+        CREATE TABLE IF NOT EXISTS mentor_assignments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_user_id TEXT NOT NULL,
+            author_user_id TEXT NOT NULL,
+            author_role TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            action_tab TEXT NOT NULL DEFAULT 'lesson',
+            cta_label TEXT NOT NULL DEFAULT 'Open Assignment',
+            chapter_hint TEXT,
+            context_hint TEXT,
+            due_label TEXT,
+            status TEXT NOT NULL DEFAULT 'assigned',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP
+        );
+        """,
+        commit=True,
+        raise_on_error=True,
+    )
+    execute_query(
+        """
+        CREATE TABLE IF NOT EXISTS study_plan_progress (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            week_key TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            item_type TEXT NOT NULL,
+            completed INTEGER NOT NULL DEFAULT 1,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, week_key, item_id, item_type)
+        );
+        """,
+        commit=True,
+        raise_on_error=True,
+    )
+    execute_query(
+        """
+        CREATE TABLE IF NOT EXISTS study_plan_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            week_key TEXT NOT NULL,
+            plan_json TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, week_key)
+        );
+        """,
+        commit=True,
+        raise_on_error=True,
+    )

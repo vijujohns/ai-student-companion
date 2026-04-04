@@ -1,0 +1,30 @@
+{
+  "name": "Brain Teaser Academy",
+  "short_name": "Brain Teaser",
+  "description": "AI-powered learning workspace for chat, lessons, quizzes, flashcards, and progress.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b0d0f",
+  "theme_color": "#10a37f",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon.ico",
+      "sizes": "48x48",
+      "type": "image/x-icon",
+      "purpose": "any"
+    }
+  ]
+}

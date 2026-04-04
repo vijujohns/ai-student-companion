@@ -9,6 +9,8 @@ import os
 import json
 import time
 
+from ..core.config_loader import get_rag_config
+
 # Base data directory
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -18,43 +20,96 @@ SUMMARY_FILE = os.path.join(DATA_DIR, "pdf_summaries.json")
 # ----------------- PDF Extraction -----------------
 def extract_text_from_pdf(file_path):
     """
-    Extract text from PDF file and clean whitespace
+    Extract text from PDF while preserving paragraph/heading structure as much as possible.
     """
     reader = PdfReader(file_path)
-    text = ""
+    pages = []
 
     for page in reader.pages:
-        text += page.extract_text() or ""
+        page_text = (page.extract_text() or "").replace("\x00", " ")
+        page_text = re.sub(r"[ \t]+\n", "\n", page_text)
+        page_text = re.sub(r"\n{3,}", "\n\n", page_text)
+        page_text = re.sub(r"[ \t]{2,}", " ", page_text)
+        page_text = page_text.strip()
+        if page_text:
+            pages.append(page_text)
 
-    # 🔹 Clean text
-    text = re.sub(r"\s+", " ", text)
+    text = "\n\n".join(pages)
+    text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
 
+def _get_chunking_config():
+    rag_cfg = get_rag_config()
+
+    def _read_int(key, default, minimum, maximum):
+        try:
+            value = int(rag_cfg.get(key, default))
+        except (TypeError, ValueError):
+            value = default
+        value = max(minimum, value)
+        return min(value, maximum)
+
+    return {
+        "chunk_size": _read_int("chunk_size", 1000, 300, 4000),
+        "chunk_overlap": _read_int("chunk_overlap", 180, 0, 1200),
+        "summary_chunk_size": _read_int("summary_chunk_size", 2200, 600, 5000),
+        "summary_chunk_overlap": _read_int("summary_chunk_overlap", 250, 0, 1800),
+    }
+
+
 # ----------------- Chunking -----------------
-def chunk_text(text, chunk_size=500, overlap=100):
+def chunk_text(text, chunk_size=None, overlap=None):
     """
-    Split text into overlapping chunks (better RAG quality)
+    Split text into overlapping chunks while preferring paragraph and sentence boundaries.
     """
+    cfg = _get_chunking_config()
+    chunk_size = cfg["chunk_size"] if chunk_size is None else max(300, int(chunk_size or cfg["chunk_size"]))
+    overlap = cfg["chunk_overlap"] if overlap is None else max(0, int(overlap or cfg["chunk_overlap"]))
+    overlap = min(overlap, max(0, chunk_size - 1))
+
+    cleaned = str(text or "").replace("\r", "\n")
+    cleaned = re.sub(r"[ \t]+", " ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    if not cleaned:
+        return []
+
     chunks = []
     start = 0
-    text_length = len(text)
+    text_len = len(cleaned)
 
-    while start < text_length:
-        end = start + chunk_size
-        chunk = text[start:end]
+    while start < text_len:
+        end = min(text_len, start + chunk_size)
 
-        # Try to end at sentence boundary
-        if end < text_length:
-            last_period = chunk.rfind(".")
-            if last_period > 100:
-                chunk = chunk[:last_period + 1]
-                end = start + last_period + 1
+        if end < text_len:
+            lower_bound = max(start + int(chunk_size * 0.6), start + 1)
 
-        chunks.append(chunk.strip())
+            paragraph_break = cleaned.rfind("\n\n", lower_bound, end)
+            if paragraph_break != -1:
+                end = paragraph_break
+            else:
+                sentence_break = max(
+                    cleaned.rfind(". ", lower_bound, end),
+                    cleaned.rfind("! ", lower_bound, end),
+                    cleaned.rfind("? ", lower_bound, end),
+                )
+                if sentence_break != -1:
+                    end = sentence_break + 1
+                else:
+                    whitespace_break = cleaned.rfind(" ", lower_bound, end)
+                    if whitespace_break != -1:
+                        end = whitespace_break
 
-        # Overlap
-        start = end - overlap
+        chunk = cleaned[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+
+        if end >= text_len:
+            break
+
+        start = max(end - overlap, start + 1)
+        while start < text_len and cleaned[start].isspace():
+            start += 1
 
     return chunks
 
@@ -92,7 +147,12 @@ def summarize_pdf(text, pdf_path, model_name=None):
     from .model_manager import generate_response
 
     # 🔹 Step 1: medium chunks (NOT FAISS chunks)
-    summary_chunks = chunk_text(text, chunk_size=1500, overlap=200)
+    chunk_cfg = _get_chunking_config()
+    summary_chunks = chunk_text(
+        text,
+        chunk_size=chunk_cfg["summary_chunk_size"],
+        overlap=chunk_cfg["summary_chunk_overlap"],
+    )
 
     print(f"📘 Summarizing {len(summary_chunks)} sections...")
 
@@ -121,7 +181,7 @@ SUMMARY:
 """
 
         try:
-            summary = generate_response("", prompt, model_name=model_name)
+            summary = generate_response("", prompt, model_name=model_name, task="summary")
             partial_summaries.append(summary)
 
             section_time = time.time() - section_start
@@ -166,29 +226,72 @@ def ingest_pdf(file_path, model_name=None):
 
     # Step 2: chunk text for FAISS
     chunks = chunk_text(text)
-    for chunk in chunks:
-        add_doc(chunk, source=file_path)
+    document_title = os.path.splitext(os.path.basename(file_path))[0]
+    source_name = os.path.basename(file_path)
+    for index, chunk in enumerate(chunks, start=1):
+        enriched_chunk = (
+            f"Document: {document_title}\n"
+            f"Source: {source_name}\n"
+            f"Chunk {index}:\n{chunk}"
+        )
+        add_doc(enriched_chunk, source=file_path)
 
     print(f"✅ Ingested {len(chunks)} chunks + summary successfully")
 
 
+def ingest_image(file_path: str, model_name=None) -> None:
+    """
+    Image ingestion pipeline using OCR:
+    1. Extract text from image via OCR (Tesseract, if available)
+    2. Chunk extracted text
+    3. Add chunks to FAISS
+
+    If OCR is unavailable or the image yields no text, logs a warning and
+    returns without adding any chunks (the file is still marked as indexed
+    so it doesn't get re-queued endlessly).
+    """
+    from .faiss_store import add_doc
+    from .ocr import extract_text_from_image
+
+    print(f"Ingesting image (OCR): {file_path}")
+
+    text = extract_text_from_image(file_path)
+    if not text.strip():
+        print(f"⚠️  No text extracted from image: {file_path} (OCR unavailable or blank image)")
+        return
+
+    chunks = chunk_text(text)
+    for chunk in chunks:
+        add_doc(chunk, source=file_path)
+
+    print(f"✅ Ingested {len(chunks)} OCR chunks from image successfully")
+
+
 def safe_summarize(text, pdf_path, model_name=None, chunk_index=None):
     """
-    Summarize text safely within model context window.
+    Summarize text safely within the model context window by splitting long
+    inputs into smaller sub-chunks and summarizing each one.
     """
     from .model_manager import generate_response
 
     max_chunk_len = 1500
-    text_chunks = [text[i:i+max_chunk_len] for i in range(0, len(text), max_chunk_len)]
+    text = (text or "").strip()
+    if not text:
+        return ""
+
+    text_chunks = [text[i:i + max_chunk_len] for i in range(0, len(text), max_chunk_len)]
 
     summaries = []
     for idx, chunk in enumerate(text_chunks):
         prompt = f"Summarize this document concisely in English:\n\n{chunk}\n\nSummary:"
-        print(f"🔹 Summarizing sub-chunk {idx+1}/{len(text_chunks)} of chunk {chunk_index if chunk_index is not None else 'N/A'}")
-        summary = generate_response("", prompt, model_name=model_name)
-        summaries.append(summary.strip())
+        print(
+            f"🔹 Summarizing sub-chunk {idx + 1}/{len(text_chunks)} of chunk "
+            f"{chunk_index if chunk_index is not None else 'N/A'}"
+        )
+        summary = generate_response("", prompt, model_name=model_name, task="summary")
+        summaries.append((summary or "").strip())
 
-    return " ".join(summaries)
+    return " ".join(part for part in summaries if part)
 
 
 def combine_summaries(summaries, model_name=None):
@@ -214,7 +317,7 @@ Summary:
 """
 
             try:
-                summary = generate_response("", prompt, model_name=model_name)
+                summary = generate_response("", prompt, model_name=model_name, task="summary")
                 new_summaries.append(summary)
             except Exception as e:
                 print(f"❌ Combine error: {e}")

@@ -1,16 +1,32 @@
 import { expect, test } from "@playwright/test";
 
 test("lesson plan generation flow works", async ({ page }) => {
-  await page.route("http://127.0.0.1:8011/**", async (route) => {
+  let authenticated = false;
+
+  await page.route("http://127.0.0.1:8000/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const pathname = url.pathname;
 
     if (pathname === "/login" && request.method() === "POST") {
+      authenticated = true;
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({ access_token: "fake-jwt-token", token_type: "bearer", role: "student" }),
+      });
+      return;
+    }
+
+    if (pathname === "/auth/session" && request.method() === "GET") {
+      await route.fulfill({
+        status: authenticated ? 200 : 401,
+        contentType: "application/json",
+        body: JSON.stringify(
+          authenticated
+            ? { authenticated: true, username: "student", role: "student" }
+            : { authenticated: false }
+        ),
       });
       return;
     }
@@ -111,7 +127,7 @@ test("lesson plan generation flow works", async ({ page }) => {
   await selectors.nth(3).selectOption({ label: "Chapter 1" });
 
   await page.getByRole("button", { name: "Lesson" }).click();
-  await page.getByRole("button", { name: "Generate Plan" }).click();
+  await page.getByRole("button", { name: "New Lesson Plan" }).click();
 
   await expect(page.getByRole("button", { name: "1. Introduction" })).toBeVisible();
   await expect(page.getByText("Lesson - Chapter 1").first()).toBeVisible();

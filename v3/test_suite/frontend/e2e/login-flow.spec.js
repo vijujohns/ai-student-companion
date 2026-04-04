@@ -3,8 +3,9 @@ import { expect, test } from "@playwright/test";
 test("user can login from UI", async ({ page }) => {
   const email = `e2e.${Date.now()}@example.com`;
   const password = "Pass@1234";
+  let authenticated = false;
 
-  await page.route("http://127.0.0.1:8011/**", async (route) => {
+  await page.route("http://127.0.0.1:8000/**", async (route) => {
     const req = route.request();
     const url = new URL(req.url());
 
@@ -36,7 +37,13 @@ test("user can login from UI", async ({ page }) => {
     }
 
     if (url.pathname === "/login" && req.method() === "POST") {
+      authenticated = true;
       await json({ access_token: "fake-jwt-token", token_type: "bearer", role: "student" });
+      return;
+    }
+
+    if (url.pathname === "/auth/session" && req.method() === "GET") {
+      await json({ authenticated, username: "student", role: "student" }, authenticated ? 200 : 401);
       return;
     }
 
@@ -68,7 +75,7 @@ test("user can login from UI", async ({ page }) => {
   await page.getByRole("button", { name: "Continue" }).click();
 
   // Login should render chat workspace actions after token is stored.
-  await expect(page.getByRole("button", { name: /New Chat/i })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole("button", { name: /New Chat/i }).first()).toBeVisible({ timeout: 15000 });
 
   expect(loginStatus).toBe(200);
 });

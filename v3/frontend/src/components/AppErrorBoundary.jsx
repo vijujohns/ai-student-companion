@@ -22,7 +22,7 @@ export default class AppErrorBoundary extends React.Component {
     if (this.state.hasError) {
       return (
         <div className="app-crash-screen" role="alert">
-          <h2>Brain Teaser hit an unexpected UI error</h2>
+          <h2>Brain Teaser Academy hit an unexpected UI error</h2>
           <p>
             The page was protected from a white-screen crash. Please reload the app.
           </p>

@@ -86,6 +86,26 @@ class TestIntegrationAuth:
         assert user["username"] == "admin"
         assert user["role"] == "admin"
 
+    def test_authenticate_inactive_user_rejected(self):
+        """Authentication fails for a disabled account even with correct credentials."""
+        import sqlite3 as _sqlite3
+        from app.modules.user_manager import hash_password as _hp
+
+        # Insert a deactivated user directly into the test DB.
+        conn = get_connection()
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO users (username, email, password_hash, role, is_active) "
+                "VALUES (?, ?, ?, ?, ?)",
+                ("inactive_user", "inactive@example.com", _hp("pass123"), "student", 0),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        user = authenticate_user("inactive@example.com", "pass123")
+        assert user is None, "Inactive account must not be authenticated"
+
 
 class TestRegisterAndReset:
     """Integration tests for register and reset-password APIs"""

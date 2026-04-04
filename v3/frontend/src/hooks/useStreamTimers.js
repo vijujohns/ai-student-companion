@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef } from "react";
 
+const STREAM_STALL_HINT_MS = 6000;
+const STREAM_WATCHDOG_MS = 210000;
+
 export function useStreamTimers({
   loadHistory,
   setStreamStatus,
@@ -32,7 +35,7 @@ export function useStreamTimers({
     setStreamStatus("Generating answer...");
     streamStallTimeoutRef.current = setTimeout(() => {
       setStreamStatus("Still working... finalizing full answer");
-    }, 6000);
+    }, STREAM_STALL_HINT_MS);
   }, [clearStreamStallHint, setStreamStatus]);
 
   const armStreamWatchdog = useCallback(
@@ -49,7 +52,7 @@ export function useStreamTimers({
         pendingResponseRef.current = false;
         activeStreamSessionRef.current = null;
         setStreamStatus("");
-      }, 90000);
+      }, STREAM_WATCHDOG_MS);
     },
     [
       activeStreamSessionRef,

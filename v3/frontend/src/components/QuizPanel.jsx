@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useEffect, useState } from "react";
+﻿import React, { useCallback, useEffect, useRef, useState } from "react";
 import { FiCheckCircle, FiClipboard, FiLayers, FiRefreshCw } from "react-icons/fi";
 import { apiFetch, parseApiError } from "../services/api";
 
@@ -20,6 +20,9 @@ export default function QuizPanel({
   onQuizSessionsChange,
   planSummary = null,
   defaultChapter = "",
+  prefillContext = "",
+  autoRunToken = "",
+  prefilledQuizData = null,
   currentContextLabel = null,
   hasLinkedContent = false,
   isContextViewerVisible = false,
@@ -44,6 +47,10 @@ export default function QuizPanel({
   const [loadingPhase, setLoadingPhase] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const pendingGeneratedSessionRef = useRef("");
+  const skipNextSessionLoadRef = useRef(false);
+  const loadingRef = useRef(false);
+  const onResultReadyRef = useRef(onResultReady);
 
   const quizUsage = Number(planSummary?.usage?.quiz_count || 0);
   const quizLimit = Number(planSummary?.limits?.quiz_count || 0);
@@ -56,6 +63,14 @@ export default function QuizPanel({
     onQuizSessionChange?.(sid);
     return sid;
   }, [onQuizSessionChange, quizSessionId, sessionId]);
+
+  useEffect(() => {
+    loadingRef.current = loading;
+  }, [loading]);
+
+  useEffect(() => {
+    onResultReadyRef.current = onResultReady;
+  }, [onResultReady]);
 
   const normalizeQuizQuestions = useCallback((items) => {
     if (!Array.isArray(items)) return [];
@@ -160,42 +175,53 @@ export default function QuizPanel({
   const loadLatestQuiz = useCallback(
     async (sid) => {
       if (!sid) {
-        resetQuizView();
+        if (!loadingRef.current) {
+          resetQuizView();
+        }
         return;
       }
 
       try {
         const res = await apiFetch(`/quiz/latest?session_id=${encodeURIComponent(sid)}`);
         if (!res.ok) {
-          resetQuizView();
+          if (!loadingRef.current && pendingGeneratedSessionRef.current !== String(sid)) {
+            resetQuizView();
+          }
           return;
         }
 
         const data = await res.json();
-        if (!data || data.error) {
-          resetQuizView();
+        const normalized = normalizeQuizQuestions(data?.quiz || []);
+        const hasQuizPayload = Boolean(data?.quiz_id) || normalized.length > 0;
+
+        if (!hasQuizPayload) {
+          if (!loadingRef.current && pendingGeneratedSessionRef.current !== String(sid)) {
+            resetQuizView();
+          }
           return;
         }
 
-        const normalized = normalizeQuizQuestions(data.quiz || []);
+        pendingGeneratedSessionRef.current = "";
         setQuizId(data.quiz_id || "");
         setArtifactId(null);
         setQuestions(normalized);
         setAnswers({});
         setResults({});
         setQuizSource("session");
-        if (normalized.length > 0 && onResultReady) {
-          onResultReady();
+        if (normalized.length > 0 && onResultReadyRef.current) {
+          onResultReadyRef.current();
         }
       } catch (err) {
         console.error("Failed to load latest quiz", err);
-        resetQuizView();
+        if (!loadingRef.current) {
+          resetQuizView();
+        }
       }
     },
-    [normalizeQuizQuestions, onResultReady, resetQuizView]
+    [normalizeQuizQuestions, resetQuizView]
   );
 
-  const runGenerateQuiz = async ({ reuseSession = false } = {}) => {
+  const runGenerateQuiz = async ({ reuseSession = false, preferCurrentSession = false } = {}) => {
     if (quizBlocked) {
       setError(`Quiz limit reached (${quizUsage}/${quizLimit}). Upgrade plan to continue.`);
       return;
@@ -226,8 +252,11 @@ export default function QuizPanel({
         return;
       }
     } else {
-      sid = createSessionId();
-      onQuizSessionChange?.(sid);
+      sid = preferCurrentSession && quizSessionId ? quizSessionId : createSessionId();
+      pendingGeneratedSessionRef.current = sid;
+      if (!preferCurrentSession || !quizSessionId) {
+        onQuizSessionChange?.(sid);
+      }
     }
 
     try {
@@ -324,6 +353,7 @@ export default function QuizPanel({
         setAnswers({});
         setResults({});
         setQuizSource("session");
+        pendingGeneratedSessionRef.current = "";
         if (normalized.length > 0 && onResultReady) {
           onResultReady();
         }
@@ -395,6 +425,32 @@ export default function QuizPanel({
   }, [defaultChapter]);
 
   useEffect(() => {
+    if (prefillContext) {
+      setQuizContext(prefillContext);
+      setGenerationMode("context");
+    }
+  }, [prefillContext]);
+
+  useEffect(() => {
+    const normalized = normalizeQuizQuestions(prefilledQuizData?.quiz || []);
+    if (normalized.length === 0) return;
+
+    setQuizId(prefilledQuizData?.quiz_id || "");
+    setArtifactId(prefilledQuizData?.artifact_id || null);
+    setQuestions(normalized);
+    setAnswers({});
+    setResults({});
+    setQuizSource("session");
+    onResultReady?.();
+  }, [normalizeQuizQuestions, onResultReady, prefilledQuizData]);
+
+  useEffect(() => {
+    if (!autoRunToken) return;
+    skipNextSessionLoadRef.current = true;
+    runGenerateQuiz({ reuseSession: false, preferCurrentSession: true });
+  }, [autoRunToken]);
+
+  useEffect(() => {
     if (!quizSessionId && sessionId) {
       onQuizSessionChange?.(sessionId);
     }
@@ -414,6 +470,11 @@ export default function QuizPanel({
   useEffect(() => {
     if (!quizSessionId) {
       resetQuizView();
+      return;
+    }
+
+    if (skipNextSessionLoadRef.current) {
+      skipNextSessionLoadRef.current = false;
       return;
     }
 
@@ -447,11 +508,13 @@ export default function QuizPanel({
     <div className="workspace-panel quiz-panel">
       <div className="workspace-panel__header">
         <div>
-          <div className="workspace-panel__eyebrow">
-            <FiClipboard />
-            <span>Quiz</span>
+          <div className="workspace-panel__title-row">
+            <h3>Contextual chapter quiz</h3>
+            <div className="workspace-panel__eyebrow">
+              <FiClipboard />
+              <span>Quiz</span>
+            </div>
           </div>
-          <h3>Contextual chapter quiz</h3>
           <p>Generate quizzes from selected content, or switch source to a lesson card from your lesson plan.</p>
         </div>
         {!isContextViewerVisible && (

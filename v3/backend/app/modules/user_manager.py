@@ -99,6 +99,27 @@ def init_default_users(db_connection):
             ("admin@example.com", "Admin", "User", "1990-01-01", "admin"),
         )
 
+        # In local/test environments, keep the seeded default credentials and
+        # quota state deterministic so auth and quota-bound API smoke tests stay
+        # stable across repeated runs against the persistent app DB.
+        if app_env in {"development", "dev", "test", "local"}:
+            cursor.execute(
+                "UPDATE users SET password_hash=?, is_active=1 WHERE username=?",
+                (student_hash, "student"),
+            )
+            cursor.execute(
+                "UPDATE users SET password_hash=?, is_active=1 WHERE username=?",
+                (admin_hash, "admin"),
+            )
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='usage_counters'"
+            )
+            if cursor.fetchone():
+                cursor.execute(
+                    "DELETE FROM usage_counters WHERE user_id IN (?, ?)",
+                    ("student", "admin"),
+                )
+
         db_connection.commit()
 
     except Exception as e:

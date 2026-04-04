@@ -223,40 +223,42 @@ def rename_quiz_session(user_id: str, session_id: str, title: str) -> Dict:
     cleaned_title = (title or "").strip()
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT id, quiz_json
-        FROM lesson_quizzes
-        WHERE user_id=? AND session_id=?
-        """,
-        (user_id, session_id),
-    )
-    rows = cursor.fetchall()
-    if not rows:
-        conn.close()
-        return {"status": "not_found"}
-
-    for row in rows:
-        payload = {}
-        try:
-            payload = json.loads(row[1] or "{}")
-            if not isinstance(payload, dict):
-                payload = {}
-        except Exception:
-            payload = {}
-
-        payload["session_title"] = cleaned_title
+    try:
         cursor.execute(
             """
-            UPDATE lesson_quizzes
-            SET quiz_json=?
-            WHERE id=?
+            SELECT id, quiz_json
+            FROM lesson_quizzes
+            WHERE user_id=? AND session_id=?
             """,
-            (json.dumps(payload), int(row[0])),
+            (user_id, session_id),
         )
+        rows = cursor.fetchall()
+        if not rows:
+            return {"status": "not_found"}
 
-    conn.commit()
-    conn.close()
+        cursor.execute("BEGIN IMMEDIATE")
+        for row in rows:
+            payload = {}
+            try:
+                payload = json.loads(row[1] or "{}")
+                if not isinstance(payload, dict):
+                    payload = {}
+            except Exception:
+                payload = {}
+
+            payload["session_title"] = cleaned_title
+            cursor.execute(
+                """
+                UPDATE lesson_quizzes
+                SET quiz_json=?
+                WHERE id=?
+                """,
+                (json.dumps(payload), int(row[0])),
+            )
+
+        conn.commit()
+    finally:
+        conn.close()
     return {"status": "updated"}
 
 

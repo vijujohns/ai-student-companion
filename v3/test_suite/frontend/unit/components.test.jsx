@@ -17,6 +17,16 @@ describe('Login Component', () => {
     global.fetch = undefined;
   });
 
+  it('lets new users choose a role during registration', () => {
+    render(<Login />);
+    fireEvent.click(screen.getByRole('button', { name: /register/i }));
+
+    expect(screen.getByLabelText(/register as/i)).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /student/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /teacher/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /parent/i })).toBeInTheDocument();
+  });
+
   it('renders continue button', () => {
     render(<Login />);
     const continueButton = screen.getByRole('button', { name: /continue/i });

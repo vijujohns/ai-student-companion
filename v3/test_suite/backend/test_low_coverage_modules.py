@@ -7,7 +7,8 @@ from unittest.mock import MagicMock, patch, mock_open
 
 import pytest
 
-from app.modules import db as db_module, ingestion, model_manager, progress, translation, ws_auth
+from app.core import config_loader
+from app.modules import db as db_module, ingestion, model_manager, policy, progress, translation, ws_auth
 
 
 class _FakeWebSocket:
@@ -36,10 +37,10 @@ class TestWsAuth:
         token = asyncio.run(ws_auth.get_token_from_websocket(ws))
         assert token == "tok.en.sig"
 
-    def test_get_token_from_query_param_fallback(self):
+    def test_get_token_from_query_param_fallback_disabled_by_default(self):
         ws = _FakeWebSocket(query={"token": "legacy-token"})
         token = asyncio.run(ws_auth.get_token_from_websocket(ws))
-        assert token == "legacy-token"
+        assert token is None
 
     def test_get_token_returns_none_when_missing(self):
         ws = _FakeWebSocket()
@@ -76,6 +77,67 @@ class TestWsAuth:
         assert result is None
         assert ws.closed is not None
         assert ws.closed["code"] == 1008
+
+
+class TestPolicy:
+    def test_consume_quota_blocks_until_period_expires(self, tmp_path):
+        db_path = tmp_path / "policy-test.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            """
+            CREATE TABLE users (
+                username TEXT PRIMARY KEY,
+                plan_code TEXT,
+                plan_started_at TEXT,
+                plan_expires_at TEXT,
+                auto_renew INTEGER,
+                is_trial INTEGER,
+                trial_ends_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE usage_counters (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT,
+                period_start TEXT,
+                period_end TEXT,
+                uploads_count INTEGER DEFAULT 0,
+                quiz_count INTEGER DEFAULT 0,
+                flashcard_count INTEGER DEFAULT 0,
+                lesson_count INTEGER DEFAULT 0,
+                ask_count INTEGER DEFAULT 0,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO users (username, plan_code, plan_started_at, auto_renew, is_trial, trial_ends_at) VALUES (?, ?, ?, ?, ?, ?)",
+            ("student", "free", "2024-01-01T00:00:00+00:00", 0, 1, "2024-01-08T00:00:00+00:00"),
+        )
+        conn.commit()
+
+        timestamps = iter(
+            [
+                policy.datetime(2024, 1, 1, tzinfo=policy.UTC),
+                policy.datetime(2024, 1, 1, tzinfo=policy.UTC),
+                policy.datetime(2024, 1, 8, tzinfo=policy.UTC),
+                policy.datetime(2024, 1, 8, tzinfo=policy.UTC),
+            ]
+        )
+
+        conn.close()
+
+        with patch("app.modules.policy.get_connection", side_effect=lambda: sqlite3.connect(db_path)), patch("app.modules.policy._utc_now", side_effect=lambda: next(timestamps)):
+            assert policy.consume_quota("student", "upload") == (True, "MSG-1000")
+            assert policy.consume_quota("student", "upload") == (False, "MSG-1201")
+            assert policy.consume_quota("student", "upload") == (True, "MSG-1000")
+
+        conn = sqlite3.connect(db_path)
+        rows = conn.execute("SELECT uploads_count FROM usage_counters ORDER BY id").fetchall()
+        assert rows == [(1,), (1,)]
+        conn.close()
 
 
 class TestProgress:
@@ -171,6 +233,25 @@ class TestTranslation:
         mock_translator.return_value = mock_instance
 
         assert translation.translate("bonjour", target="en") == "bonjour"
+
+
+class TestConfigLoader:
+    @patch("app.core.config_loader.load_config")
+    def test_get_backend_bind_config_prefers_environment_variables(self, mock_load_config, monkeypatch):
+        mock_load_config.return_value = {
+            "network": {
+                "backend": {
+                    "bind_host": "127.0.0.1",
+                    "port": 8000,
+                }
+            }
+        }
+        monkeypatch.setenv("BACKEND_HOST", "0.0.0.0")
+        monkeypatch.setenv("PORT", "8015")
+
+        bind = config_loader.get_backend_bind_config()
+
+        assert bind == {"host": "0.0.0.0", "port": 8015}
 
 
 class TestIngestion:
@@ -273,6 +354,16 @@ class _TrackingLock:
 
 
 class TestModelManager:
+    def test_decide_model_uses_fastest_profile_for_quiz(self):
+        with patch("app.modules.model_manager.get_active_model_profile_key", return_value="fastest"), \
+             patch("app.modules.model_manager.is_model_available", return_value=True):
+            assert model_manager.decide_model("quiz", "Generate 5 questions", "short context") == "tinyllama-1.1b-chat"
+
+    def test_decide_model_uses_balanced_profile_for_assessment(self):
+        with patch("app.modules.model_manager.get_active_model_profile_key", return_value="balanced"), \
+             patch("app.modules.model_manager.is_model_available", return_value=True):
+            assert model_manager.decide_model("quiz", "Create an exam paper with reasoning", "longer classroom context") == "phi-4"
+
     @patch("app.modules.model_manager.get_model_config")
     @patch("app.modules.model_manager.get_llm_instance")
     @patch("app.modules.model_manager._get_llm_lock")

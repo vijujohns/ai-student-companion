@@ -137,6 +137,88 @@ code {
   overflow: visible;
 }
 
+.app-shell__network {
+  max-width: 1440px;
+  margin: 0 auto calc(8px * var(--ui-space-scale));
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: calc(7px * var(--ui-space-scale)) calc(12px * var(--ui-space-scale));
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  width: fit-content;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-soft);
+  font-size: max(0.78rem, calc(0.8rem * var(--ui-font-scale)));
+}
+
+.app-shell__network.is-online {
+  border-color: rgba(25, 195, 156, 0.22);
+  color: #74d8be;
+}
+
+.app-shell__network.is-offline {
+  border-color: rgba(251, 191, 36, 0.4);
+  color: #f8d27b;
+}
+
+.app-shell__network-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.95rem;
+}
+
+.app-shell__install {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(25, 195, 156, 0.32);
+  border-radius: 999px;
+  background: rgba(16, 163, 127, 0.2);
+  color: #bdf5e7;
+  font-size: max(0.76rem, calc(0.78rem * var(--ui-font-scale)));
+  padding: calc(4px * var(--ui-space-scale)) calc(10px * var(--ui-space-scale));
+  cursor: pointer;
+}
+
+.app-shell__install:hover {
+  background: rgba(16, 163, 127, 0.28);
+}
+
+.app-shell__backend-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: calc(3px * var(--ui-space-scale)) calc(9px * var(--ui-space-scale));
+  font-size: max(0.74rem, calc(0.76rem * var(--ui-font-scale)));
+  color: var(--text-soft);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.app-shell__backend-chip--healthy {
+  color: #7ee7ca;
+  border-color: rgba(25, 195, 156, 0.35);
+  background: rgba(16, 163, 127, 0.2);
+}
+
+.app-shell__backend-chip--degraded {
+  color: #f9d58f;
+  border-color: rgba(251, 191, 36, 0.46);
+  background: rgba(251, 191, 36, 0.16);
+}
+
+.app-shell__backend-chip--down {
+  color: #f8a0a0;
+  border-color: rgba(248, 113, 113, 0.45);
+  background: rgba(248, 113, 113, 0.14);
+}
+
+.app-shell__backend-chip--checking {
+  color: var(--text-soft);
+}
+
 .app-shell__header {
   max-width: 1440px;
   margin: 0 auto calc(12px * var(--ui-space-scale));
@@ -150,7 +232,13 @@ code {
 .app-shell__content--workspace .app-shell__header {
   width: calc(100% - var(--workspace-sidebar-offset));
   max-width: none;
-  margin: 0 0 calc(12px * var(--ui-space-scale)) var(--workspace-sidebar-offset);
+  align-items: center;
+  margin: 0 0 calc(10px * var(--ui-space-scale)) var(--workspace-sidebar-offset);
+}
+
+.app-shell__content--workspace .app-shell__network {
+  margin-left: var(--workspace-sidebar-offset);
+  max-width: calc(100% - var(--workspace-sidebar-offset));
 }
 
 .app-shell__content--workspace {
@@ -164,6 +252,51 @@ code {
   flex: 1 1 0;
   min-width: 0;
   align-self: flex-start;
+}
+
+.app-shell__brand-copy {
+  min-width: 0;
+}
+
+.app-shell__brand-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.app-shell__brand-subtle {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-soft);
+  font-size: max(0.68rem, calc(0.7rem * var(--ui-font-scale)));
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.app-shell__brand-kicker {
+  display: inline-flex;
+  margin-top: 4px;
+  color: var(--accent-strong);
+  font-size: max(0.74rem, calc(0.76rem * var(--ui-font-scale)));
+  letter-spacing: 0.03em;
+}
+
+.app-shell__brand-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid rgba(25, 195, 156, 0.24);
+  background: rgba(16, 163, 127, 0.12);
+  color: var(--accent-strong);
+  padding: 4px 10px;
+  font-size: max(0.72rem, calc(0.74rem * var(--ui-font-scale)));
+  line-height: 1;
+  text-transform: capitalize;
 }
 
 .app-shell__header-right {
@@ -256,6 +389,7 @@ code {
 }
 
 .app-shell__account {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
@@ -264,7 +398,7 @@ code {
   background: rgba(255, 255, 255, 0.04);
   border-radius: 16px;
   padding: 6px 9px;
-  min-width: min(100%, 360px);
+  min-width: min(100%, 320px);
   margin-top: 0;
 }
 
@@ -315,23 +449,126 @@ code {
   text-transform: capitalize;
 }
 
-.app-shell__logout {
+.app-shell__account-trigger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  min-width: 36px;
+  min-height: 36px;
   border: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.02);
   color: var(--text);
-  font-size: max(0.8125rem, calc(0.84rem * var(--ui-font-scale)));
   border-radius: 12px;
-  padding: 7px 10px;
+  padding: 7px 9px;
   cursor: pointer;
-  white-space: nowrap;
 }
 
-.app-shell__logout:hover {
+.app-shell__account-trigger:hover {
   transform: translateY(-1px);
+}
+
+.app-shell__account-menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 25;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(15, 18, 22, 0.96);
+  box-shadow: 0 18px 38px rgba(15, 23, 42, 0.42);
+}
+
+.app-shell__account-menu-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px;
+}
+
+.app-shell__account-menu-section-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+}
+
+.app-shell__account-status-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.app-shell__account-status-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-soft);
+  font-size: max(0.76rem, calc(0.78rem * var(--ui-font-scale)));
+}
+
+.app-shell__account-status-row.is-online {
+  color: #74d8be;
+}
+
+.app-shell__account-status-row.is-offline {
+  color: #f8d27b;
+}
+
+.app-shell__account-status-list .app-shell__backend-chip {
+  width: fit-content;
+}
+
+.app-shell__account-menu-divider {
+  height: 1px;
+  margin: 2px 4px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.app-shell__density--menu {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.app-shell__density--menu .app-shell__density-option {
+  text-align: center;
+  padding: 6px 0;
+}
+
+.app-shell__account-menu-item {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+}
+
+.app-shell__account-menu-item:hover {
+  background: var(--accent-soft);
+  border-color: rgba(25, 195, 156, 0.18);
+  color: var(--accent-strong);
+}
+
+.app-shell__account-menu-item--danger:hover {
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.25);
+  color: #fecaca;
 }
 
 .login-shell {
@@ -576,13 +813,18 @@ code {
   color: var(--text-dim);
 }
 
-.login-field__input input {
+.login-field__input input,
+.login-field__input select {
   width: 100%;
   background: transparent;
   color: var(--text);
   border: 0;
   outline: 0;
   padding: 14px 0;
+}
+
+.login-field__input select option {
+  color: #111827;
 }
 
 .login-submit {
@@ -636,6 +878,12 @@ code {
     margin-left: 0;
   }
 
+  .app-shell__network,
+  .app-shell__content--workspace .app-shell__network {
+    margin-left: 0;
+    max-width: 100%;
+  }
+
   .app-shell__account {
     width: 100%;
     min-width: 0;
@@ -655,6 +903,19 @@ code {
     padding: 16px;
   }
 
+  .app-shell__network {
+    width: 100%;
+    border-radius: 12px;
+    justify-content: space-between;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .app-shell__install {
+    width: 100%;
+    justify-content: center;
+  }
+
   .login-hero,
   .login-card {
     padding: 22px;
@@ -670,12 +931,14 @@ code {
   }
 
   .app-shell__account {
-    flex-direction: column;
-    align-items: stretch;
+    width: 100%;
+    justify-content: space-between;
   }
 
-  .app-shell__logout {
-    width: 100%;
+  .app-shell__account-menu {
+    left: 0;
+    right: auto;
+    min-width: 100%;
   }
 
   .login-field-grid,

@@ -64,6 +64,23 @@ function resolveWsBaseUrl() {
   return configuredBase;
 }
 
+async function buildRuntimeHint(code) {
+  try {
+    const res = await fetch(`${API_BASE_URL}/health/runtime`, {
+      method: "GET",
+      credentials: "include",
+    });
+    if (!res.ok) {
+      return `⚠️ WebSocket closed unexpectedly (code ${code}). Backend responded ${res.status}; check backend logs.`;
+    }
+    const data = await res.json();
+    const mode = data?.kb_reindex_mode || "unknown";
+    return `⚠️ WebSocket closed unexpectedly (code ${code}). Backend is reachable (${data?.status || "ok"}); check auth/session or backend worker logs. KB reindex mode: ${mode}.`;
+  } catch {
+    return `⚠️ WebSocket closed unexpectedly (code ${code}). Backend may be down or on a different port. Confirm backend is running and reachable.`;
+  }
+}
+
 /**
  * Connect WebSocket for a given type and provide streaming callbacks
  * @param {function} onMessage - called with streaming token
@@ -86,23 +103,35 @@ export function connectWebSocket(onMessage, onClose = () => {}, type = "ask") {
 
   const protocols = token ? [`chat.${token}`] : undefined;
   const ws = protocols ? new WebSocket(urlBase, protocols) : new WebSocket(urlBase);
+  ws.__hasActivity = false;
   sockets[type] = ws;
 
-  ws.onopen = () => console.log(`✅ ${type} WebSocket Connected`);
+  ws.onopen = () => {
+    ws.__hasActivity = false;
+    console.log(`✅ ${type} WebSocket Connected`);
+  };
   intentionalClose[type] = false;
 
   ws.onmessage = (event) => {
     const current = getCallbacks(type);
     try {
       const msg = JSON.parse(event.data);
-      if (msg.type === "chunk") current.onMessage(msg.data);
-      if (msg.type === "end") current.onMessage("[END]");
+      if (msg.type === "chunk") {
+        ws.__hasActivity = true;
+        current.onMessage(msg.data);
+      }
+      if (msg.type === "end") {
+        ws.__hasActivity = false;
+        current.onMessage("[END]");
+      }
       if (msg.type === "error") {
+        ws.__hasActivity = false;
         console.error(`❌ ${type} Server Error:`, msg.data);
         current.onMessage("[END]");
       }
     } catch {
       // fallback for plain text
+      ws.__hasActivity = true;
       current.onMessage(event.data);
     }
   };
@@ -112,8 +141,11 @@ export function connectWebSocket(onMessage, onClose = () => {}, type = "ask") {
     // Browsers may emit onerror when a CONNECTING socket is intentionally closed during teardown.
     if (intentionalClose[type]) return;
     console.error(`❌ ${type} WebSocket Error:`, error);
+    if (!ws.__hasActivity) {
+      return;
+    }
     current.onMessage(
-      "\n\n⚠️ Connection error while contacting the AI server. Check backend logs in debug.log."
+      "\n\n⚠️ Connection error while contacting the AI server. Verifying backend health..."
     );
     current.onMessage("[END]");
   };
@@ -129,10 +161,15 @@ export function connectWebSocket(onMessage, onClose = () => {}, type = "ask") {
       return;
     }
     console.log(`🔌 ${type} WebSocket Closed (code ${event.code})`);
-    if (!wasIntentional && event.code !== 1000 && event.code !== 1001) {
-      current.onMessage(
-        `\n\n⚠️ WebSocket closed unexpectedly (code ${event.code}). Open browser console for details.`
-      );
+    const shouldShowCloseHint = !wasIntentional
+      && Boolean(ws.__hasActivity)
+      && event.code !== 1000
+      && event.code !== 1001
+      && event.code !== 1005;
+    if (shouldShowCloseHint) {
+      buildRuntimeHint(event.code).then((hint) => {
+        current.onMessage(`\n\n${hint}`);
+      });
     }
     current.onClose();
     current.onMessage("[END]");
@@ -173,6 +210,7 @@ export function sendMessage(type = "ask", message, onMessage) {
 
   try {
     const payload = typeof message === "object" ? JSON.stringify(message) : message;
+    ws.__hasActivity = true;
     sendWhenOpen(ws, payload);
   } catch (err) {
     console.error(`❌ ${type} Send Error:`, err);

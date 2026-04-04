@@ -102,12 +102,14 @@ class TestAskWsEndpoint:
     @patch("app.api.websocket.authenticate_websocket")
     @patch("app.api.websocket.get_requested_subprotocol")
     @patch("app.api.websocket.generate_answer_stream")
-    @patch("app.api.websocket.save_chat")
-    def test_websocket_ask_streams_chunks_and_end(self, mock_save_chat, mock_stream, mock_subprotocol, mock_auth):
+    @patch("app.api.websocket.consume_quota")
+    @patch("app.api.websocket.release_usage")
+    def test_websocket_ask_streams_chunks_and_end(self, mock_release_usage, mock_consume_quota, mock_stream, mock_subprotocol, mock_auth):
         mock_auth.return_value = {"username": "student"}
         mock_subprotocol.return_value = "chat.token"
+        mock_consume_quota.return_value = (True, "MSG-1000")
         mock_stream.return_value = ["A", "B"]
-        payload = json.dumps({"query": "Hi", "session_id": "s1"})
+        payload = json.dumps({"query": "Hi", "session_id": "s1", "context_id": "upload:7"})
         ws = FakeWebSocket(incoming=[payload, WebSocketDisconnect(code=1000)])
 
         _run(ws_mod.websocket_ask(ws))
@@ -115,19 +117,63 @@ class TestAskWsEndpoint:
         sent = "\n".join(ws.sent_texts)
         assert '"type": "chunk"' in sent
         assert '"type": "end"' in sent
-        mock_save_chat.assert_called()
+        mock_stream.assert_called_once_with("Hi", "student", "s1", None, session_content_override="upload:7")
+        mock_release_usage.assert_not_called()
 
     @patch("app.api.websocket.authenticate_websocket")
     @patch("app.api.websocket.generate_answer_stream")
-    @patch("app.api.websocket.save_chat")
-    def test_websocket_ask_fallback_plain_text_input(self, mock_save_chat, mock_stream, mock_auth):
+    @patch("app.api.websocket.consume_quota")
+    @patch("app.api.websocket.release_usage")
+    def test_websocket_ask_fallback_plain_text_input(self, mock_release_usage, mock_consume_quota, mock_stream, mock_auth):
         mock_auth.return_value = {"username": "student"}
+        mock_consume_quota.return_value = (True, "MSG-1000")
         mock_stream.return_value = ["ok"]
         ws = FakeWebSocket(incoming=["plain text question", WebSocketDisconnect(code=1000)])
 
         _run(ws_mod.websocket_ask(ws))
 
-        mock_save_chat.assert_called()
+        mock_stream.assert_called_once_with("plain text question", "student", "default", None, session_content_override=None)
+        mock_release_usage.assert_not_called()
+
+    @patch("app.api.websocket.authenticate_websocket")
+    @patch("app.api.websocket.consume_quota")
+    @patch("app.api.websocket.get_message")
+    @patch("app.api.websocket.generate_answer_stream")
+    @patch("app.api.websocket.release_usage")
+    def test_websocket_ask_respects_quota(self, mock_release_usage, mock_stream, mock_get_message, mock_consume_quota, mock_auth):
+        mock_auth.return_value = {"username": "student"}
+        mock_consume_quota.return_value = (False, "MSG-1201")
+        mock_get_message.return_value = {
+            "message_id": "MSG-1201",
+            "level": "error",
+            "user_text": "Quota exceeded",
+        }
+        ws = FakeWebSocket(incoming=[json.dumps({"query": "Hi", "session_id": "s1"}), WebSocketDisconnect(code=1000)])
+
+        _run(ws_mod.websocket_ask(ws))
+
+        sent = "\n".join(ws.sent_texts)
+        assert '"type": "error"' in sent
+        assert '"type": "end"' in sent
+        mock_stream.assert_not_called()
+        mock_release_usage.assert_not_called()
+
+    @patch("app.api.websocket.authenticate_websocket")
+    @patch("app.api.websocket.generate_answer_stream")
+    @patch("app.api.websocket.consume_quota")
+    @patch("app.api.websocket.release_usage")
+    def test_websocket_ask_releases_quota_on_stream_failure(self, mock_release_usage, mock_consume_quota, mock_stream, mock_auth):
+        mock_auth.return_value = {"username": "student"}
+        mock_consume_quota.return_value = (True, "MSG-1000")
+        mock_stream.side_effect = RuntimeError("stream failed")
+        ws = FakeWebSocket(incoming=[json.dumps({"query": "Hi", "session_id": "s1"}), WebSocketDisconnect(code=1000)])
+
+        _run(ws_mod.websocket_ask(ws))
+
+        mock_release_usage.assert_called_once_with("student", "ask")
+        sent = "\n".join(ws.sent_texts)
+        assert '"type": "error"' in sent
+        assert '"type": "end"' in sent
 
 
 class TestLessonWsEndpoint:

@@ -16,7 +16,8 @@ from dotenv import load_dotenv
 from .api.routes import router
 from .api.websocket import websocket_router
 
-from .modules.faiss_store import load_index, load_knowledge_base
+from .modules.faiss_store import load_index
+from .modules.kb_sync import load_knowledge_base
 from .modules.file_management import recover_indexing_jobs
 from .modules.db import init_db
 from .core.debug_logger import dlog, is_debug
@@ -31,6 +32,24 @@ import threading
 load_dotenv()
 
 
+def _route_domain(path: str) -> str:
+    if path.startswith("/relationships") or path.startswith("/students") or path.startswith("/collaboration"):
+        return "identity-collab"
+    if path.startswith("/files") or path in {"/classes", "/subjects", "/folders", "/contents", "/pdf", "/ocr/status"}:
+        return "knowledge-ingestion"
+    if path.startswith("/progress"):
+        return "analytics-progress"
+    if path.startswith("/subscription") or path.startswith("/plan"):
+        return "commercial"
+    if path.startswith("/lesson") or path.startswith("/quiz") or path.startswith("/flashcards") or path.startswith("/artifacts") or path.startswith("/sessions") or path.startswith("/ask"):
+        return "learning-session"
+    if path.startswith("/login") or path.startswith("/register") or path.startswith("/auth") or path.startswith("/profile") or path.startswith("/reset-password"):
+        return "identity-auth"
+    if path.startswith("/admin"):
+        return "admin"
+    return "misc"
+
+
 # ── Request / Response logging middleware ─────────────────────────────────────
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """Logs every HTTP request → response when DEBUG_LOGGING is enabled."""
@@ -42,10 +61,12 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         start = time.perf_counter()
         method = request.method
         path = request.url.path
+        domain = _route_domain(path)
         qp = dict(request.query_params)
         client = request.client.host if request.client else "unknown"
 
         dlog("API", f"→ {method} {path}",
+             domain=domain,
              client=client,
              query_params=qp if qp else None)
 
@@ -53,12 +74,14 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
             duration_ms = (time.perf_counter() - start) * 1000
             dlog("API", f"← {method} {path} {response.status_code}",
+                 domain=domain,
                  duration_ms=f"{duration_ms:.1f}ms",
                  client=client)
             return response
         except Exception as exc:
             duration_ms = (time.perf_counter() - start) * 1000
             dlog("API", f"← {method} {path} EXCEPTION",
+                 domain=domain,
                  error=str(exc),
                  duration_ms=f"{duration_ms:.1f}ms")
             raise

@@ -41,6 +41,30 @@ describe("useStreamTimers", () => {
     expect(setStreamStatus).toHaveBeenCalledWith("Still working... finalizing full answer");
   });
 
+  it("waits longer than 90 seconds before forcing recovery for a cold-start reply", () => {
+    const loadHistory = vi.fn();
+
+    const { result } = renderHook(() =>
+      useStreamTimers({
+        loadHistory,
+        setStreamStatus: vi.fn(),
+        setIsStreaming: vi.fn(),
+        setCurrentStream: vi.fn(),
+        currentStreamRef: { current: "" },
+        isStreamingRef: { current: true },
+        pendingResponseRef: { current: true },
+        activeStreamSessionRef: { current: "s1" },
+      })
+    );
+
+    act(() => {
+      result.current.armStreamWatchdog("session-123");
+      vi.advanceTimersByTime(90000);
+    });
+
+    expect(loadHistory).not.toHaveBeenCalled();
+  });
+
   it("watchdog finalizes stalled stream and reloads history", () => {
     const loadHistory = vi.fn();
     const setStreamStatus = vi.fn();
@@ -66,7 +90,7 @@ describe("useStreamTimers", () => {
 
     act(() => {
       result.current.armStreamWatchdog("session-123");
-      vi.advanceTimersByTime(90000);
+      vi.advanceTimersByTime(210000);
     });
 
     expect(loadHistory).toHaveBeenCalledWith("session-123", { force: true });

@@ -27,6 +27,19 @@ def get_model_config(model_name: str):
     return config["models"].get(model_name, {})
 
 
+def get_default_model_profile(default: str = "balanced") -> str:
+    config = load_config()
+    value = config.get("active_model_profile", default)
+    text = str(value or default).strip().lower()
+    return text or default
+
+
+def get_model_profiles_config() -> dict:
+    config = load_config()
+    profiles = config.get("model_profiles", {})
+    return profiles if isinstance(profiles, dict) else {}
+
+
 def get_rag_config() -> dict:
     config = load_config()
     rag_cfg = config.get("rag", {})
@@ -49,16 +62,35 @@ def get_network_config() -> dict:
     return network_cfg if isinstance(network_cfg, dict) else {}
 
 
+def _first_non_empty(*values):
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
 def get_backend_bind_config() -> dict:
     backend_cfg = get_network_config().get("backend", {})
     if not isinstance(backend_cfg, dict):
         raise ValueError("network.backend config must be an object")
 
-    host = str(backend_cfg.get("bind_host", "")).strip()
+    host = _first_non_empty(
+        os.getenv("BACKEND_BIND_HOST"),
+        os.getenv("BACKEND_HOST"),
+        os.getenv("HOST"),
+        backend_cfg.get("bind_host"),
+    )
     if not host:
         raise ValueError("network.backend.bind_host must be set in configs/settings.json")
 
-    port_raw = backend_cfg.get("port")
+    port_raw = _first_non_empty(
+        os.getenv("BACKEND_PORT"),
+        os.getenv("PORT"),
+        backend_cfg.get("port"),
+    )
     try:
         port = int(port_raw)
     except (TypeError, ValueError):
@@ -72,21 +104,25 @@ def get_backend_public_config() -> dict:
     if not isinstance(backend_cfg, dict):
         raise ValueError("network.backend config must be an object")
 
-    protocol = str(backend_cfg.get("protocol", "")).strip()
-    ws_protocol = str(backend_cfg.get("ws_protocol", "")).strip()
+    protocol = _first_non_empty(os.getenv("BACKEND_PROTOCOL"), backend_cfg.get("protocol"))
+    ws_protocol = _first_non_empty(os.getenv("BACKEND_WS_PROTOCOL"), backend_cfg.get("ws_protocol"))
     if not protocol:
         raise ValueError("network.backend.protocol must be set in configs/settings.json")
     if not ws_protocol:
         raise ValueError("network.backend.ws_protocol must be set in configs/settings.json")
 
-    port_raw = backend_cfg.get("port")
+    port_raw = _first_non_empty(
+        os.getenv("BACKEND_PORT"),
+        os.getenv("PORT"),
+        backend_cfg.get("port"),
+    )
     try:
         port = int(port_raw)
     except (TypeError, ValueError):
         raise ValueError("network.backend.port must be a valid integer")
 
     return {
-        "public_host": str(backend_cfg.get("public_host", "")).strip(),
+        "public_host": _first_non_empty(os.getenv("BACKEND_PUBLIC_HOST"), os.getenv("BACKEND_HOST"), backend_cfg.get("public_host")),
         "port": max(1, port),
         "protocol": protocol,
         "ws_protocol": ws_protocol,

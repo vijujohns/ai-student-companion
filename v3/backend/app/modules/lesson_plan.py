@@ -21,17 +21,24 @@ from .model_manager import generate_response
 from .quiz import generate_quiz, get_quiz, submit_quiz_answer
 
 
+_SUMMARY_STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from", "has",
+    "have", "in", "into", "is", "it", "its", "of", "on", "or", "that", "the", "their",
+    "this", "to", "was", "were", "which", "with", "your",
+}
+
+
 # -------------------------
 # Helper: Default Step Template
 # -------------------------
 def default_steps() -> List[Dict]:
     """Return generic lesson steps with no content (used only as last resort)."""
     return [
-        {"id": 1, "title": "Introduction", "type": "concept", "status": "pending", "content": ""},
-        {"id": 2, "title": "Key Concepts", "type": "concept", "status": "pending", "content": ""},
-        {"id": 3, "title": "Examples / Case Study", "type": "example", "status": "pending", "content": ""},
-        {"id": 4, "title": "Quiz", "type": "quiz", "status": "pending", "content": ""},
-        {"id": 5, "title": "Revision", "type": "revision", "status": "pending", "content": ""},
+        {"id": 1, "title": "Introduction", "type": "concept", "status": "pending", "content": "", "bullets": [], "numbered": []},
+        {"id": 2, "title": "Key Concepts", "type": "concept", "status": "pending", "content": "", "bullets": [], "numbered": []},
+        {"id": 3, "title": "Examples / Case Study", "type": "example", "status": "pending", "content": "", "bullets": [], "numbered": []},
+        {"id": 4, "title": "Quiz", "type": "quiz", "status": "pending", "content": "", "bullets": [], "numbered": []},
+        {"id": 5, "title": "Revision", "type": "revision", "status": "pending", "content": "", "bullets": [], "numbered": []},
     ]
 
 
@@ -89,8 +96,245 @@ def _steps_from_llm_text(text: str, chunks: List[str]) -> List[Dict]:
             "type": "concept",
             "status": "pending",
             "content": content,
+            "bullets": [],
+            "numbered": [],
         })
     return steps
+
+
+def _normalize_list_items(items) -> List[str]:
+    if not isinstance(items, list):
+        return []
+
+    normalized = []
+    seen = set()
+    for item in items:
+        text = re.sub(r"\s+", " ", str(item or "")).strip(" -\t\r\n")
+        if not text:
+            continue
+        if not text.endswith((".", "?", "!")):
+            text = f"{text}."
+        if text.lower() in seen:
+            continue
+        seen.add(text.lower())
+        normalized.append(text[:220])
+    return normalized[:6]
+
+
+def _clean_sentence(sentence: str) -> str:
+    text = re.sub(r"\s+", " ", str(sentence or "")).strip()
+    text = re.sub(r"^[^A-Za-z0-9]+", "", text)
+    text = re.sub(r"\s*([,;:.!?])", r"\1", text)
+    return text.strip()
+
+
+def _top_keywords(sentences: List[str], limit: int = 4) -> List[str]:
+    counts: Dict[str, int] = {}
+    for sentence in sentences:
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9'-]+", sentence.lower()):
+            if token in _SUMMARY_STOPWORDS or len(token) < 4:
+                continue
+            counts[token] = counts.get(token, 0) + 1
+
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    return [word for word, _ in ranked[:limit]]
+
+
+def _sentence_to_point(sentence: str) -> str:
+    cleaned = _clean_sentence(sentence).rstrip(".")
+    if not cleaned:
+        return ""
+
+    words = cleaned.split()
+    snippet = " ".join(words[:18]).rstrip(" ,;:-")
+    if len(words) > 18:
+        snippet += "..."
+    return snippet[:180]
+
+
+def _build_ordered_items(step_type: str, title: str, bullet_points: List[str]) -> List[str]:
+    if step_type != "quiz":
+        return []
+
+    ordered = []
+    for point in bullet_points[:3]:
+        stem = point.rstrip(".")
+        if not stem:
+            continue
+        ordered.append(f"Explain or answer based on this idea: {stem}.")
+
+    if not ordered and title:
+        ordered.append(f"Write a short answer about {title.lower()}.")
+    return ordered[:3]
+
+
+def _build_rewritten_content(group: List[str], title: str, step_type: str) -> Dict[str, object]:
+    cleaned_sentences = []
+    seen = set()
+    for sentence in group:
+        cleaned = _clean_sentence(sentence)
+        if not cleaned:
+            continue
+        lowered = cleaned.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        cleaned_sentences.append(cleaned)
+
+    keywords = _top_keywords(cleaned_sentences)
+    bullet_points = _normalize_list_items([_sentence_to_point(sentence) for sentence in cleaned_sentences[:4]])
+    ordered = _normalize_list_items(_build_ordered_items(step_type, title, bullet_points))
+
+    focus = ", ".join(keywords[:3])
+    summary_parts = []
+    if title:
+        if focus:
+            summary_parts.append(f"This section explains {title.lower()} by focusing on {focus}.")
+        else:
+            summary_parts.append(f"This section explains {title.lower()} in a clear, study-friendly way.")
+
+    if bullet_points:
+        preview = "; ".join(point.rstrip(".") for point in bullet_points[:2])
+        summary_parts.append(f"Key ideas include {preview}.")
+    elif cleaned_sentences:
+        summary_parts.append(cleaned_sentences[0][:220])
+
+    content = " ".join(part.strip() for part in summary_parts if part.strip())[:420]
+    return {
+        "content": content,
+        "bullets": [] if step_type == "quiz" else bullet_points,
+        "numbered": ordered,
+    }
+
+
+def _max_ngram_overlap_ratio(source: str, candidate: str, n: int = 7) -> float:
+    source_words = re.findall(r"[A-Za-z0-9']+", (source or "").lower())
+    cand_words = re.findall(r"[A-Za-z0-9']+", (candidate or "").lower())
+    if len(source_words) < n or len(cand_words) < n:
+        return 0.0
+
+    source_ngrams = {tuple(source_words[i:i + n]) for i in range(0, len(source_words) - n + 1)}
+    cand_ngrams = [tuple(cand_words[i:i + n]) for i in range(0, len(cand_words) - n + 1)]
+    if not cand_ngrams:
+        return 0.0
+
+    overlap = sum(1 for ng in cand_ngrams if ng in source_ngrams)
+    return overlap / max(1, len(cand_ngrams))
+
+
+def _is_too_extractive(source: str, content: str, bullets: List[str], numbered: List[str]) -> bool:
+    merged = " ".join([content or "", " ".join(bullets or []), " ".join(numbered or [])]).strip()
+    if not merged or not source:
+        return False
+
+    # If most generated n-grams are copied from source, the output is too extractive.
+    return _max_ngram_overlap_ratio(source, merged, n=7) >= 0.45
+
+
+def _rewrite_steps_abstractive(
+    chapter: str,
+    candidate_steps: List[Dict],
+    model_name: Optional[str] = None,
+) -> List[Dict]:
+    if not candidate_steps:
+        return []
+
+    source_blocks = []
+    for step in candidate_steps:
+        source_blocks.append(
+            {
+                "id": int(step.get("id", 0) or 0),
+                "title": str(step.get("title", "")).strip(),
+                "type": str(step.get("type", "concept")).strip() or "concept",
+                "source": str(step.get("_source", "")).strip(),
+            }
+        )
+
+    prompt = f"""
+You are an expert teacher writing clean study notes.
+
+Task:
+- Rewrite each step below into student-friendly language.
+- Keep the same id/title/type for each step.
+- Do NOT copy long phrases from source text.
+
+Strict requirements:
+- Return valid JSON only.
+- Top-level key must be "steps".
+- For each step include: id, title, type, content, bullets, numbered.
+- content: 2-3 short sentences.
+- bullets: 2-4 concise points for concept/example/revision; [] for quiz.
+- numbered: [] for concept/example/revision; 2-3 ordered prompts for quiz.
+- Avoid repeating source wording. Explain in simpler language.
+
+Chapter: {chapter}
+
+Step Sources:
+{json.dumps(source_blocks, ensure_ascii=True)}
+
+Required output format:
+{{
+  "steps": [
+    {{
+      "id": 1,
+      "title": "...",
+      "type": "concept|example|quiz|revision",
+      "content": "...",
+      "bullets": ["..."],
+      "numbered": ["..."]
+    }}
+  ]
+}}
+"""
+
+    try:
+        if model_name:
+            rewritten_text = generate_response(context="", query=prompt, model_name=model_name, task="lesson")
+        else:
+            rewritten_text = generate_response(context="", query=prompt, task="lesson")
+    except Exception:
+        return []
+
+    parsed = _extract_json_from_text(rewritten_text or "")
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("steps"), list):
+        return []
+
+    by_id = {int(s.get("id", 0) or 0): s for s in candidate_steps}
+    accepted = []
+    for raw in parsed.get("steps", []):
+        try:
+            sid = int(raw.get("id", 0) or 0)
+        except Exception:
+            sid = 0
+        original = by_id.get(sid)
+        if not original:
+            continue
+
+        content = str(raw.get("content", "")).strip()
+        bullets = _normalize_list_items(raw.get("bullets", []))
+        numbered = _normalize_list_items(raw.get("numbered", []))
+
+        if _is_too_extractive(str(original.get("_source", "")), content, bullets, numbered):
+            continue
+
+        accepted.append(
+            {
+                "id": int(original.get("id", sid)),
+                "title": str(raw.get("title", original.get("title", f"Step {sid}")))[:120],
+                "type": str(raw.get("type", original.get("type", "concept"))),
+                "status": str(original.get("status", "pending")),
+                "content": content,
+                "bullets": bullets,
+                "numbered": numbered,
+            }
+        )
+
+    min_required = 1 if len(candidate_steps) == 1 else max(2, len(candidate_steps) // 2)
+    if len(accepted) < min_required:
+        return []
+
+    accepted.sort(key=lambda step: step.get("id", 0))
+    return accepted
 
 
 def _default_steps_with_content(chunks: List[str], chapter: str) -> List[Dict]:
@@ -115,19 +359,109 @@ def _default_steps_with_content(chunks: List[str], chapter: str) -> List[Dict]:
             content = " ".join(content_chunks)[:600].strip()
         else:
             content = f"Refer to your {chapter} notes for this section."
+        structured = {
+            "content": content,
+            "bullets": [],
+            "numbered": [],
+        }
         steps.append({
             "id": idx,
             "title": title,
             "type": stype,
             "status": "pending",
-            "content": content,
+            "content": structured["content"],
+            "bullets": structured["bullets"],
+            "numbered": structured["numbered"],
         })
     return steps
+
+
+def _to_sentences(text: str) -> List[str]:
+    """Split text into readable sentence-like units."""
+    normalized = re.sub(r"\s+", " ", (text or "")).strip()
+    if not normalized:
+        return []
+    parts = re.split(r"(?<=[\.!?])\s+", normalized)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _infer_step_type(title: str, content: str) -> str:
+    lowered = f"{title} {content}".lower()
+    if any(k in lowered for k in ["question", "quiz", "exercise", "practice", "mcq"]):
+        return "quiz"
+    if any(k in lowered for k in ["example", "case", "application", "activity"]):
+        return "example"
+    if any(k in lowered for k in ["summary", "recap", "revision", "review", "conclusion"]):
+        return "revision"
+    return "concept"
+
+
+def _build_adaptive_steps_with_content(chunks: List[str], chapter: str) -> List[Dict]:
+    """
+    Build context-tailored lesson steps from retrieved chunks.
+    Unlike the default template, step count and titles adapt to chapter content.
+    """
+    valid_chunks = [re.sub(r"\s+", " ", (c or "")).strip() for c in chunks if (c or "").strip()]
+    if not valid_chunks:
+        return default_steps()
+
+    # Derive a dynamic step count from available context.
+    step_count = max(4, min(8, max(1, len(valid_chunks) // 2 + 2)))
+
+    all_sentences: List[str] = []
+    for chunk in valid_chunks:
+        all_sentences.extend(_to_sentences(chunk))
+
+    if not all_sentences:
+        return _default_steps_with_content(valid_chunks, chapter)
+
+    group_size = max(1, len(all_sentences) // step_count)
+    steps: List[Dict] = []
+    cursor = 0
+
+    for idx in range(1, step_count + 1):
+        if idx == step_count:
+            group = all_sentences[cursor:]
+        else:
+            group = all_sentences[cursor:cursor + group_size]
+        cursor += group_size
+
+        if not group:
+            break
+
+        seed = group[0]
+        seed_words = [w for w in re.findall(r"[A-Za-z0-9']+", seed) if len(w) > 2]
+        short_title = " ".join(seed_words[:6]).strip()
+        if short_title:
+            title = short_title[:80].rstrip(" ,.-")
+            if not title.lower().startswith(("step", "topic")):
+                title = title[0].upper() + title[1:]
+        else:
+            title = f"{chapter} - Topic {idx}"
+
+        step_type = _infer_step_type(title, " ".join(group))
+        structured = _build_rewritten_content(group, title, step_type)
+        steps.append(
+            {
+                "id": idx,
+                "title": title,
+                "type": step_type,
+                "status": "pending",
+                "content": structured["content"],
+                "bullets": structured["bullets"],
+                "numbered": structured["numbered"],
+                "_source": " ".join(group).strip()[:1400],
+            }
+        )
+
+    return steps or _default_steps_with_content(valid_chunks, chapter)
 
 
 def _normalize_steps(steps: List[Dict]) -> List[Dict]:
     normalized = []
     for idx, step in enumerate(steps, start=1):
+        bullets = _normalize_list_items(step.get("bullets", []))
+        numbered = _normalize_list_items(step.get("numbered", []))
         normalized.append(
             {
                 "id": int(step.get("id", idx)),
@@ -135,6 +469,8 @@ def _normalize_steps(steps: List[Dict]) -> List[Dict]:
                 "type": str(step.get("type", "concept")),
                 "status": str(step.get("status", "pending")),
                 "content": str(step.get("content", "")),
+                "bullets": bullets,
+                "numbered": numbered,
             }
         )
     return normalized
@@ -147,6 +483,8 @@ def _save_lesson_cards(cursor, lesson_plan_id: int, steps: List[Dict]):
             {
                 "status": step.get("status", "pending"),
                 "content": step.get("content", ""),
+                "bullets": step.get("bullets", []),
+                "numbered": step.get("numbered", []),
             }
         )
         cursor.execute(
@@ -198,13 +536,18 @@ def generate_lesson_plan(
 You are an AI tutor. Generate a detailed lesson plan for the chapter below.
 Constraints:
 - Use only the provided content.
-- Divide content into clear subtopics.
-- Suggest exercises, examples, and context-aware quizzes.
-- Include revision steps for weak areas.
+- Build a coherent lesson that reflects the actual chapter flow.
+- Number of steps should adapt to the chapter depth (typically 4-8).
+- Include concepts, examples/applications, and practice/revision where relevant.
+- Rewrite the material in teaching language instead of copying chapter lines verbatim.
 - Return valid JSON only (no markdown, no commentary).
 - JSON must be an object with a top-level key "steps".
-- Each step must include: title, type, content.
+- Each step must include: title, type, content, bullets, numbered.
 - Allowed step types: concept, example, quiz, revision.
+- "content" must be a clean 2-4 sentence rewritten summary.
+- "bullets" must be an array of key points when unordered facts matter, otherwise [].
+- "numbered" must be an array for ordered instructions, practice items, or sequences when they matter, otherwise [].
+- Do not copy long phrases directly from the source.
 
 Preferred Lesson Focus (optional):
 {context_hint or "No special focus provided."}
@@ -215,20 +558,22 @@ Chapter Content:
 Required Output Format:
 {{
     "steps": [
-        {{"title": "Introduction", "type": "concept", "content": "..."}},
-        {{"title": "Key Concepts", "type": "concept", "content": "..."}},
-        {{"title": "Examples", "type": "example", "content": "..."}},
-        {{"title": "Practice Quiz", "type": "quiz", "content": "..."}},
-        {{"title": "Revision", "type": "revision", "content": "..."}}
+        {{
+            "title": "<content-specific topic>",
+            "type": "concept|example|quiz|revision",
+            "content": "<rewritten teaching summary>",
+            "bullets": ["<key point>", "<key point>"],
+            "numbered": ["<ordered item if needed>"]
+        }}
     ]
 }}
 """
 
     try:
         if model_name:
-            plan_text = generate_response(context=context, query=prompt, model_name=model_name, task="qa")
+            plan_text = generate_response(context=context, query=prompt, model_name=model_name, task="lesson")
         else:
-            plan_text = generate_response(context=context, query=prompt, task="qa")
+            plan_text = generate_response(context=context, query=prompt, task="lesson")
     except Exception:
         # Fallback to default steps if LLM fails
         plan_text = None
@@ -245,9 +590,11 @@ Required Output Format:
     if not steps and plan_text:
         steps = _steps_from_llm_text(plan_text, chunks)
 
-    # Last fallback: build standard steps but fill with retrieved chapter content.
+    # Last fallback: build adaptive steps from retrieved chapter content.
     if not steps:
-        steps = _default_steps_with_content(chunks, chapter) if chunks else default_steps()
+        adaptive_steps = _build_adaptive_steps_with_content(chunks, chapter) if chunks else default_steps()
+        rewritten_steps = _rewrite_steps_abstractive(chapter, adaptive_steps, model_name=model_name)
+        steps = rewritten_steps or adaptive_steps
 
     steps = _normalize_steps(steps)
 
@@ -522,6 +869,8 @@ def get_lesson_plan_cards(user_id: str, lesson_plan_id: int) -> List[Dict]:
                 "title": row[2],
                 "card_type": row[3],
                 "content": meta.get("content", ""),
+                "bullets": _normalize_list_items(meta.get("bullets", [])),
+                "numbered": _normalize_list_items(meta.get("numbered", [])),
                 "status": row[5] or "pending",
                 "completed_at": row[6],
             }
@@ -590,6 +939,8 @@ def get_card_for_user(user_id: str, card_id: int) -> Optional[Dict]:
         "title": row[3],
         "card_type": row[4],
         "content": content_meta.get("content", ""),
+        "bullets": _normalize_list_items(content_meta.get("bullets", [])),
+        "numbered": _normalize_list_items(content_meta.get("numbered", [])),
     }
 
 
@@ -639,18 +990,21 @@ def get_next_step(user_id: str, session_id: str) -> Optional[Dict]:
         return None
 
     conn = get_connection()
-    cursor = conn.cursor()
-    for step in plan["steps"]:
-        cursor.execute("""
-            SELECT status FROM lesson_progress
-            WHERE user_id=? AND session_id=? AND step_id=?
-            ORDER BY id DESC LIMIT 1
-        """, (user_id, session_id, step["id"]))
-        row = cursor.fetchone()
-        if not row or row[0] != "completed":
-            return step
+    try:
+        cursor = conn.cursor()
+        for step in plan["steps"]:
+            cursor.execute("""
+                SELECT status FROM lesson_progress
+                WHERE user_id=? AND session_id=? AND step_id=?
+                ORDER BY id DESC LIMIT 1
+            """, (user_id, session_id, step["id"]))
+            row = cursor.fetchone()
+            if not row or row[0] != "completed":
+                return step
 
-    return {"message": "Lesson completed"}
+        return {"message": "Lesson completed"}
+    finally:
+        conn.close()
 
 
 # -------------------------

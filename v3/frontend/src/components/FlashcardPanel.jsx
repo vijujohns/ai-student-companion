@@ -389,11 +389,13 @@ export default function FlashcardPanel({
     <div className="workspace-panel quiz-panel">
       <div className="workspace-panel__header">
         <div>
-          <div className="workspace-panel__eyebrow">
-            <FiLayers />
-            <span>Flashcards</span>
+          <div className="workspace-panel__title-row">
+            <h3>Lesson-based flashcards</h3>
+            <div className="workspace-panel__eyebrow">
+              <FiLayers />
+              <span>Flashcards</span>
+            </div>
           </div>
-          <h3>Lesson-based flashcards</h3>
           <p>Generate revision cards from lesson cards, with history managed in the sidebar.</p>
         </div>
         {!isContextViewerVisible && (

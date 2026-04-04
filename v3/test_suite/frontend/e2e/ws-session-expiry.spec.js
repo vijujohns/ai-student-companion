@@ -1,6 +1,8 @@
 import { test, expect } from "@playwright/test";
 
 test("logs out automatically and shows a session expired message after websocket auth expiry", async ({ page }) => {
+  let authenticated = false;
+
   await page.addInitScript(() => {
     const NativeWebSocket = window.WebSocket;
 
@@ -59,12 +61,13 @@ test("logs out automatically and shows a session expired message after websocket
     window.WebSocket = MockWebSocket;
   });
 
-  await page.route("http://127.0.0.1:8011/**", async (route) => {
+  await page.route("http://127.0.0.1:8000/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const pathname = url.pathname;
 
     if (pathname === "/login" && request.method() === "POST") {
+      authenticated = true;
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -73,6 +76,19 @@ test("logs out automatically and shows a session expired message after websocket
           token_type: "bearer",
           role: "student",
         }),
+      });
+      return;
+    }
+
+    if (pathname === "/auth/session" && request.method() === "GET") {
+      await route.fulfill({
+        status: authenticated ? 200 : 401,
+        contentType: "application/json",
+        body: JSON.stringify(
+          authenticated
+            ? { authenticated: true, username: "student", role: "student" }
+            : { authenticated: false }
+        ),
       });
       return;
     }

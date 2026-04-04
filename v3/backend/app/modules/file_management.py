@@ -5,6 +5,7 @@ import binascii
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import os
+import posixpath
 import re
 import threading
 from datetime import datetime, UTC
@@ -16,6 +17,10 @@ from .db import BASE_DIR, get_connection
 
 ALLOWED_NAME_RE = re.compile(r"^[A-Za-z0-9-]+$")
 ALLOWED_MIME_TYPES = {"application/pdf", "application/x-pdf"}
+ALLOWED_IMAGE_MIME_TYPES = {
+    "image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"
+}
+ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 CONTENT_REF_KB_PREFIX = "kb:"
 CONTENT_REF_UPLOAD_PREFIX = "upload:"
 INDEX_JOB_WORKERS = max(1, int(os.getenv("INDEX_JOB_WORKERS", "2")))
@@ -40,7 +45,15 @@ def _knowledge_base_root() -> str:
 
 
 def _normalize_relative_path(path: str) -> str:
-    return str(path or "").replace("\\", "/").strip("/")
+    raw = str(path or "").replace("\\", "/").strip("/")
+    if not raw:
+        return ""
+
+    normalized = posixpath.normpath(raw)
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+
+    return "" if normalized == "." else normalized
 
 
 def _encode_content_value(value: str) -> str:
@@ -68,11 +81,20 @@ def make_upload_content_ref(file_id: int) -> str:
 
 
 def _resolve_kb_absolute_path(relative_path: str) -> str:
-    kb_root = os.path.abspath(_knowledge_base_root())
-    candidate = os.path.abspath(os.path.join(kb_root, _normalize_relative_path(relative_path)))
+    kb_root = os.path.realpath(_knowledge_base_root())
+    candidate = os.path.realpath(os.path.join(kb_root, _normalize_relative_path(relative_path)))
     if not candidate.startswith(kb_root + os.sep) and candidate != kb_root:
         raise HTTPException(status_code=403, detail="Access denied")
     return candidate
+
+
+def _kb_relative_from_absolute_path(full_path: str) -> str:
+    kb_root = os.path.realpath(_knowledge_base_root())
+    rel = os.path.relpath(os.path.realpath(full_path), kb_root)
+    normalized = _normalize_relative_path(rel)
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Invalid content reference")
+    return normalized
 
 
 def _resolve_upload_record(requested_by: Dict[str, str], file_id: int):
@@ -106,8 +128,11 @@ def resolve_content_reference(requested_by: Dict[str, str], content_ref: str | N
     if reference.startswith(CONTENT_REF_KB_PREFIX):
         relative_path = _decode_content_value(reference[len(CONTENT_REF_KB_PREFIX):])
         full_path = _resolve_kb_absolute_path(relative_path)
+        if not os.path.isfile(full_path):
+            raise HTTPException(status_code=404, detail="Content not found")
+        canonical_rel = _kb_relative_from_absolute_path(full_path)
         return {
-            "content_id": make_kb_content_ref(relative_path),
+            "content_id": make_kb_content_ref(canonical_rel),
             "path": full_path,
             "source": "knowledge_base",
             "title": os.path.splitext(os.path.basename(full_path))[0],
@@ -126,48 +151,19 @@ def resolve_content_reference(requested_by: Dict[str, str], content_ref: str | N
             "file_id": int(row["id"]),
         }
 
-    if os.path.isabs(reference):
-        full_path = os.path.abspath(reference)
-        kb_root = os.path.abspath(_knowledge_base_root())
-        uploads_root = os.path.abspath(get_uploads_root())
-
-        if full_path.startswith(kb_root + os.sep):
-            relative_path = os.path.relpath(full_path, kb_root)
-            return {
-                "content_id": make_kb_content_ref(relative_path),
-                "path": full_path,
-                "source": "knowledge_base",
-                "title": os.path.splitext(os.path.basename(full_path))[0],
-            }
-
-        if full_path.startswith(uploads_root + os.sep):
-            relative_path = _normalize_relative_path(os.path.relpath(full_path, BASE_DIR))
-            conn = get_connection()
-            cursor = conn.cursor()
-            if requested_by.get("role") == "admin":
-                cursor.execute(
-                    "SELECT id, display_name, relative_path FROM uploaded_files WHERE relative_path=? LIMIT 1",
-                    (relative_path,),
-                )
-            else:
-                cursor.execute(
-                    "SELECT id, display_name, relative_path FROM uploaded_files WHERE user_id=? AND relative_path=? LIMIT 1",
-                    (requested_by.get("username"), relative_path),
-                )
-            row = cursor.fetchone()
-            conn.close()
-            if not row:
-                raise HTTPException(status_code=403, detail="Access denied")
-            row = dict(row)
-            return {
-                "content_id": make_upload_content_ref(int(row["id"])),
-                "path": os.path.join(BASE_DIR, row["relative_path"]),
-                "source": "uploaded",
-                "title": row.get("display_name") or "Uploaded PDF",
-                "file_id": int(row["id"]),
-            }
-
-        raise HTTPException(status_code=403, detail="Access denied")
+    # Backward compatibility for relative KB paths without a prefix.
+    # Absolute paths are intentionally unsupported.
+    if not os.path.isabs(reference):
+        full_path = _resolve_kb_absolute_path(reference)
+        if not os.path.isfile(full_path):
+            raise HTTPException(status_code=404, detail="Content not found")
+        canonical_rel = _kb_relative_from_absolute_path(full_path)
+        return {
+            "content_id": make_kb_content_ref(canonical_rel),
+            "path": full_path,
+            "source": "knowledge_base",
+            "title": os.path.splitext(os.path.basename(full_path))[0],
+        }
 
     raise HTTPException(status_code=400, detail="Invalid content reference")
 
@@ -227,6 +223,38 @@ def _validate_pdf_upload(upload: UploadFile) -> None:
         raise HTTPException(status_code=400, detail={"message_id": "MSG-1304", "message": "Only PDF files are supported."})
     if content_type and content_type not in ALLOWED_MIME_TYPES:
         raise HTTPException(status_code=400, detail={"message_id": "MSG-1304", "message": "Only PDF files are supported."})
+
+
+def _detect_extension(upload: UploadFile) -> str:
+    """Return the lower-case extension for the upload (e.g. '.pdf', '.png')."""
+    return os.path.splitext((upload.filename or "").lower())[1]
+
+
+def _validate_file_upload(upload: UploadFile) -> str:
+    """
+    Validate a file upload that may be a PDF or a supported image.
+
+    Returns the determined extension so the caller can use it when saving.
+    Raises HTTPException 400 for unsupported types.
+    """
+    ext = _detect_extension(upload)
+    content_type = (upload.content_type or "").lower()
+
+    if ext == ".pdf" or content_type in ALLOWED_MIME_TYPES:
+        return ".pdf"
+    if ext in ALLOWED_IMAGE_EXTENSIONS or content_type in ALLOWED_IMAGE_MIME_TYPES:
+        # Normalise to canonical extension
+        if content_type == "image/png" or ext == ".png":
+            return ".png"
+        if content_type in ("image/gif",) or ext == ".gif":
+            return ".gif"
+        if content_type in ("image/webp",) or ext == ".webp":
+            return ".webp"
+        return ".jpg"
+    raise HTTPException(
+        status_code=400,
+        detail={"message_id": "MSG-1304", "message": "Only PDF and image files (JPEG, PNG, GIF, WEBP) are supported."},
+    )
 
 
 def _insert_upload_record(
@@ -342,7 +370,8 @@ def _set_file_index_status(file_id: int, indexed: bool, reason: str, message_id:
 
 def _run_index_job(job_id: int, file_rows: List[Dict[str, str]]):
     _set_job_status(job_id, "RUNNING")
-    from .ingestion import ingest_pdf
+    from .ingestion import ingest_pdf, ingest_image
+    from .ocr import ALLOWED_IMAGE_EXTENSIONS
 
     try:
         for row in file_rows:
@@ -353,7 +382,11 @@ def _run_index_job(job_id: int, file_rows: List[Dict[str, str]]):
                 _set_file_index_status(file_id, False, "file_missing", "MSG-1404")
                 continue
             try:
-                ingest_pdf(full_path)
+                ext = os.path.splitext(full_path)[1].lower()
+                if ext in ALLOWED_IMAGE_EXTENSIONS:
+                    ingest_image(full_path)
+                else:
+                    ingest_pdf(full_path)
                 _set_file_index_status(file_id, True, "indexed", "MSG-1000")
             except Exception:
                 _set_file_index_status(file_id, False, "index_failed", "MSG-1302")
@@ -485,13 +518,43 @@ def upload_pdf(
     folder_name: str,
     display_name: str,
 ) -> Dict[str, object]:
+    """Upload a PDF (kept for backward compatibility). Delegates to upload_file."""
     _validate_pdf_upload(upload)
+    return _upload_file_internal(user, upload, class_name, subject_name, folder_name, display_name, extension=".pdf")
+
+
+def upload_file(
+    user: Dict[str, str],
+    upload: UploadFile,
+    class_name: str,
+    subject_name: str,
+    folder_name: str,
+    display_name: str,
+) -> Dict[str, object]:
+    """
+    Upload a PDF or image file and queue it for indexing.
+
+    Accepts: PDF, JPEG, PNG, GIF, WEBP.
+    Images are OCR'd during the index job; PDFs use text extraction as before.
+    """
+    extension = _validate_file_upload(upload)
+    return _upload_file_internal(user, upload, class_name, subject_name, folder_name, display_name, extension=extension)
+
+
+def _upload_file_internal(
+    user: Dict[str, str],
+    upload: UploadFile,
+    class_name: str,
+    subject_name: str,
+    folder_name: str,
+    display_name: str,
+    extension: str,
+) -> Dict[str, object]:
     _validate_tree_names(class_name, subject_name, folder_name, display_name)
 
     root = get_or_create_user_storage_root(user)
     user_id = user.get("username")
 
-    extension = ".pdf"
     final_file_name = f"{display_name}{extension}"
 
     destination_dir = os.path.join(root, class_name, subject_name, folder_name)
@@ -505,6 +568,7 @@ def upload_pdf(
     relative_path = os.path.relpath(destination_path, BASE_DIR)
     file_hash = _file_sha256(content)
 
+    detected_mime = upload.content_type or ("application/pdf" if extension == ".pdf" else "image/jpeg")
     file_id = _insert_upload_record(
         user_id=user_id,
         class_name=class_name,
@@ -513,7 +577,7 @@ def upload_pdf(
         file_name=final_file_name,
         display_name=display_name,
         relative_path=relative_path,
-        mime_type=upload.content_type or "application/pdf",
+        mime_type=detected_mime,
         size_bytes=len(content),
         file_sha256=file_hash,
     )

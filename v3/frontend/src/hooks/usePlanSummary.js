@@ -29,8 +29,15 @@ export function usePlanSummary({ apiFetch = defaultApiFetch } = {}) {
       setPlanSummary({
         planCode: String(plan.plan_code || "free").toUpperCase(),
         isTrial: Boolean(plan.is_trial),
+        autoRenew: Boolean(plan.auto_renew),
+        planStartedAt: plan.plan_started_at || null,
+        planExpiresAt: plan.plan_expires_at || null,
+        trialEndsAt: plan.trial_ends_at || null,
+        billingPeriod: String(plan.billing_period || "Annual"),
         usage,
         limits: plan.limits || {},
+        entitlements: Array.isArray(plan.entitlements) ? plan.entitlements : [],
+        classes: Array.isArray(plan.classes) ? plan.classes : [],
       });
     } catch (err) {
       console.error("Failed to load plan summary", err);

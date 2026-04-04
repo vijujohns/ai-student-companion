@@ -72,8 +72,10 @@ def authenticate_user(identifier: str, password: str):
     dlog("AUTH", "Login attempt", identifier=_masked)
     try:
         conn = get_connection()
-        user = get_user_by_identifier(conn, identifier)
-        conn.close()
+        try:
+            user = get_user_by_identifier(conn, identifier)
+        finally:
+            conn.close()
 
         if not user:
             dlog("AUTH", "Login FAILED — user not found", identifier=_masked)
@@ -84,6 +86,10 @@ def authenticate_user(identifier: str, password: str):
 
         if not verify_password(password, password_hash):
             dlog("AUTH", "Login FAILED — wrong password", identifier=_masked)
+            return None
+
+        if not user.get("is_active"):
+            dlog("AUTH", "Login FAILED — account inactive", identifier=_masked)
             return None
 
         dlog("AUTH", "Login SUCCESS", identifier=_masked, role=role,

@@ -14,8 +14,9 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 from ..modules.rag import generate_answer_stream
 from ..modules.lesson_plan import get_next_step, update_step_progress
 from ..modules.quiz import get_quiz, submit_quiz_answer
-from ..modules.history import save_chat
 from ..modules.ws_auth import require_websocket_auth, authenticate_websocket, get_requested_subprotocol
+from ..modules.policy import consume_quota, release_usage
+from ..modules.messages import get_message
 from ..core.debug_logger import dlog, dwarn, derror
 import asyncio, json, traceback
 
@@ -26,9 +27,31 @@ async def send_json(ws: WebSocket, data: dict):
     """Utility to send JSON safely."""
     try:
         await ws.send_text(json.dumps(data))
+        return True
     except Exception as e:
         derror("WS", f"Error sending JSON: {e}", data_type=data.get("type"))
         print(f"❌ Error sending JSON: {e}")
+        return False
+
+
+async def send_waiting_status(ws: WebSocket, stop_event: asyncio.Event, interval_seconds: int = 15):
+    """Keep slow first replies alive while the local model warms up."""
+    notices = [
+        "Preparing the AI model for your answer...",
+        "Still working on the first reply...",
+        "Almost ready - streaming will begin shortly.",
+    ]
+    notice_index = 0
+
+    while not stop_event.is_set():
+        await asyncio.sleep(interval_seconds)
+        if stop_event.is_set():
+            break
+        notice = notices[min(notice_index, len(notices) - 1)]
+        sent = await send_json(ws, {"type": "status", "data": notice})
+        if not sent:
+            break
+        notice_index += 1
 
 
 # -------------------------
@@ -96,10 +119,12 @@ async def websocket_ask(ws: WebSocket):
                 query = payload.get("query")
                 session_id = payload.get("session_id", "default")
                 model_name = payload.get("model_name")
+                context_id = payload.get("context_id")
             except Exception:
                 query = data
                 session_id = "default"
                 model_name = None
+                context_id = None
 
             dlog("WS", "Query received /ws/ask",
                  user=user["username"],
@@ -108,22 +133,50 @@ async def websocket_ask(ws: WebSocket):
                  query=query[:120] if query else None)
             print(f"🧠 Query: {query}")
 
+            allowed, message_id = consume_quota(user["username"], "ask")
+            if not allowed:
+                msg = get_message(message_id)
+                await send_json(
+                    ws,
+                    {
+                        "type": "error",
+                        "data": msg["user_text"],
+                        "message_id": msg["message_id"],
+                        "level": msg["level"],
+                    },
+                )
+                await send_json(ws, {"type": "end"})
+                continue
+
             # -------- Stream Response --------
             full_response = ""
             token_count = 0
+            keepalive_stop = asyncio.Event()
+            keepalive_task = asyncio.create_task(send_waiting_status(ws, keepalive_stop))
+            await send_json(ws, {"type": "status", "data": "Preparing your answer..."})
             try:
-                async for token in async_stream_wrapper(generate_answer_stream(query, user["username"], session_id, model_name)):
+                async for token in async_stream_wrapper(
+                    generate_answer_stream(
+                        query,
+                        user["username"],
+                        session_id,
+                        model_name,
+                        session_content_override=context_id,
+                    )
+                ):
                     full_response += token
                     token_count += 1
-                    await send_json(ws, {"type": "chunk", "data": token})
+                    if not await send_json(ws, {"type": "chunk", "data": token}):
+                        break
             except Exception as e:
+                release_usage(user["username"], "ask")
                 derror("WS", f"Streaming error /ws/ask: {e}", user=user["username"])
                 print(f"❌ Streaming error: {e}")
                 traceback.print_exc()
                 await send_json(ws, {"type": "error", "data": str(e)})
-
-            # Final save
-            save_chat(user["username"], session_id, query, full_response)
+            finally:
+                keepalive_stop.set()
+                await asyncio.gather(keepalive_task, return_exceptions=True)
 
             elapsed = (time.perf_counter() - t_start) * 1000
             dlog("WS", "Stream complete /ws/ask",
@@ -151,10 +204,20 @@ async def async_stream_wrapper(gen):
     Wraps a synchronous generator (like generate_answer_stream)
     into an async iterator without blocking the event loop.
     """
-    loop = asyncio.get_event_loop()
-    for token in gen:
+    sentinel = object()
+    iterator = iter(gen)
+
+    def _next_token():
+        try:
+            return next(iterator)
+        except StopIteration:
+            return sentinel
+
+    while True:
+        token = await asyncio.to_thread(_next_token)
+        if token is sentinel:
+            break
         yield token
-        await asyncio.sleep(0)
 
 
 # -------------------------

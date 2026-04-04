@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 test("quiz generation and submission flow works", async ({ page }) => {
   let generateCalled = false;
   let submitCalled = false;
+  let authenticated = false;
   const corsHeaders = {
     "access-control-allow-origin": "http://127.0.0.1:4174",
     "access-control-allow-credentials": "true",
@@ -21,7 +22,7 @@ test("quiz generation and submission flow works", async ({ page }) => {
     });
   };
 
-  await page.route("http://127.0.0.1:8011/**", async (route) => {
+  await page.route("http://127.0.0.1:8000/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const pathname = url.pathname;
@@ -33,7 +34,19 @@ test("quiz generation and submission flow works", async ({ page }) => {
     }
 
     if (pathname === "/login" && method === "POST") {
+      authenticated = true;
       await fulfillJson(route, { access_token: "fake-jwt-token", token_type: "bearer", role: "student" });
+      return;
+    }
+
+    if (pathname === "/auth/session" && method === "GET") {
+      await fulfillJson(
+        route,
+        authenticated
+          ? { authenticated: true, username: "student", role: "student" }
+          : { authenticated: false },
+        authenticated ? 200 : 401
+      );
       return;
     }
 
@@ -117,7 +130,7 @@ test("quiz generation and submission flow works", async ({ page }) => {
   await page.getByPlaceholder("Email").fill("student@example.com");
   await page.getByPlaceholder("Password").fill("student123");
   await page.getByRole("button", { name: "Continue" }).click();
-  await expect(page.getByRole("button", { name: /New Chat/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /New Chat/i }).first()).toBeVisible();
 
   const selectors = page.locator(".workspace-context-bar select");
   await expect(selectors.first()).toBeVisible();
@@ -129,7 +142,7 @@ test("quiz generation and submission flow works", async ({ page }) => {
 
   await page.getByRole("button", { name: "Quiz" }).click();
   const quizPanel = page.locator(".quiz-panel");
-  await quizPanel.getByRole("button", { name: "Generate Quiz" }).click();
+  await quizPanel.getByRole("button", { name: "New Quiz" }).click();
   await expect.poll(() => generateCalled).toBeTruthy();
 
   await expect(quizPanel.getByText("Session Quiz: quiz-1")).toBeVisible();

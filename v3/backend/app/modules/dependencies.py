@@ -97,16 +97,17 @@ def validate_session_ownership(session_id: str, user=Depends(get_current_user)):
          user=user.get("username", "?"))
 
     conn = get_connection()
-    cursor = conn.cursor()
-    
-    # Check if session exists and belongs to user
-    cursor.execute(
-        "SELECT user_id FROM chat_history WHERE session_id = ? LIMIT 1",
-        (session_id,)
-    )
-    result = cursor.fetchone()
-    cursor.close()
-    conn.close()
+    try:
+        cursor = conn.cursor()
+
+        # Check if session exists and belongs to user
+        cursor.execute(
+            "SELECT user_id FROM chat_history WHERE session_id = ? LIMIT 1",
+            (session_id,)
+        )
+        result = cursor.fetchone()
+    finally:
+        conn.close()
     
     if not result:
         dwarn("AUTH", "Session not found", session_id=session_id,

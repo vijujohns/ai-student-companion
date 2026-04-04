@@ -15,7 +15,9 @@ function buildJsonResponse(body, status = 200) {
 }
 
 test("upload tree shows indexed + processing selectable states", async ({ page }) => {
-  await page.route("http://127.0.0.1:8011/**", async (route) => {
+  let authenticated = false;
+
+  await page.route("http://127.0.0.1:8000/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const pathname = url.pathname;
@@ -26,7 +28,20 @@ test("upload tree shows indexed + processing selectable states", async ({ page }
     }
 
     if (pathname === "/login" && request.method() === "POST") {
+      authenticated = true;
       await route.fulfill(buildJsonResponse({ access_token: "fake-jwt-token", token_type: "bearer", role: "student" }));
+      return;
+    }
+
+    if (pathname === "/auth/session" && request.method() === "GET") {
+      await route.fulfill(
+        buildJsonResponse(
+          authenticated
+            ? { authenticated: true, username: "student", role: "student" }
+            : { authenticated: false },
+          authenticated ? 200 : 401
+        )
+      );
       return;
     }
 
@@ -114,7 +129,7 @@ test("upload tree shows indexed + processing selectable states", async ({ page }
   await page.getByPlaceholder("Password").fill("student123");
   await page.getByRole("button", { name: "Continue" }).click();
 
-  await expect(page.getByRole("button", { name: /New Chat/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /New Chat/i }).first()).toBeVisible();
   const selectors = page.locator(".workspace-context-bar select");
   await expect(selectors.first()).toBeVisible();
   await selectors.nth(0).selectOption({ label: "Class 8" });
@@ -129,7 +144,9 @@ test("upload tree shows indexed + processing selectable states", async ({ page }
 });
 
 test("plan cap disables actions with hint", async ({ page }) => {
-  await page.route("http://127.0.0.1:8011/**", async (route) => {
+  let authenticated = false;
+
+  await page.route("http://127.0.0.1:8000/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const pathname = url.pathname;
@@ -140,7 +157,20 @@ test("plan cap disables actions with hint", async ({ page }) => {
     }
 
     if (pathname === "/login" && request.method() === "POST") {
+      authenticated = true;
       await route.fulfill(buildJsonResponse({ access_token: "fake-jwt-token", token_type: "bearer", role: "student" }));
+      return;
+    }
+
+    if (pathname === "/auth/session" && request.method() === "GET") {
+      await route.fulfill(
+        buildJsonResponse(
+          authenticated
+            ? { authenticated: true, username: "student", role: "student" }
+            : { authenticated: false },
+          authenticated ? 200 : 401
+        )
+      );
       return;
     }
 
@@ -207,7 +237,7 @@ test("plan cap disables actions with hint", async ({ page }) => {
   await page.getByPlaceholder("Password").fill("student123");
   await page.getByRole("button", { name: "Continue" }).click();
 
-  await expect(page.getByRole("button", { name: /New Chat/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /New Chat/i }).first()).toBeVisible();
   const selectors = page.locator(".workspace-context-bar select");
   await expect(selectors.first()).toBeVisible();
   await selectors.nth(0).selectOption({ label: "Class 8" });
@@ -218,7 +248,7 @@ test("plan cap disables actions with hint", async ({ page }) => {
   await expect(page.getByText(/Upload limit reached/i)).toBeVisible();
 
   await page.getByRole("button", { name: "Quiz" }).click();
-  await page.getByRole("button", { name: "Generate Quiz" }).click();
+  await page.getByRole("button", { name: "New Quiz" }).click();
   await expect(page.getByText(/Quiz generation limit reached/i)).toBeVisible();
 });
 
@@ -227,8 +257,9 @@ test("lesson card completion and card-level quiz artifact save flow", async ({ p
   let artifactSaveCalled = false;
   let cardQuizGenerated = false;
   let artifactLoaded = false;
+  let authenticated = false;
 
-  await page.route("http://127.0.0.1:8011/**", async (route) => {
+  await page.route("http://127.0.0.1:8000/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const pathname = url.pathname;
@@ -239,7 +270,20 @@ test("lesson card completion and card-level quiz artifact save flow", async ({ p
     }
 
     if (pathname === "/login" && request.method() === "POST") {
+      authenticated = true;
       await route.fulfill(buildJsonResponse({ access_token: "fake-jwt-token", token_type: "bearer", role: "student" }));
+      return;
+    }
+
+    if (pathname === "/auth/session" && request.method() === "GET") {
+      await route.fulfill(
+        buildJsonResponse(
+          authenticated
+            ? { authenticated: true, username: "student", role: "student" }
+            : { authenticated: false },
+          authenticated ? 200 : 401
+        )
+      );
       return;
     }
 
@@ -373,7 +417,7 @@ test("lesson card completion and card-level quiz artifact save flow", async ({ p
   await page.getByPlaceholder("Password").fill("student123");
   await page.getByRole("button", { name: "Continue" }).click();
 
-  await expect(page.getByRole("button", { name: /New Chat/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /New Chat/i }).first()).toBeVisible();
   const selectors = page.locator(".workspace-context-bar select");
   await expect(selectors.first()).toBeVisible();
   await selectors.nth(0).selectOption({ label: "Class 8" });
@@ -382,7 +426,7 @@ test("lesson card completion and card-level quiz artifact save flow", async ({ p
   await selectors.nth(3).selectOption({ label: "Chapter 1" });
 
   await page.getByRole("button", { name: "Lesson" }).click();
-  await page.getByRole("button", { name: "Generate Plan" }).click();
+  await page.getByRole("button", { name: "New Lesson Plan" }).click();
   await expect(page.getByRole("button", { name: /1\. Intro Card/ })).toBeVisible();
 
   await page.getByRole("button", { name: /1\. Intro Card/ }).click();
@@ -409,7 +453,7 @@ test("lesson card completion and card-level quiz artifact save flow", async ({ p
     const formData = new FormData();
     formData.append("title", "Saved Quiz Artifact");
     formData.append("tags", "lesson,quiz");
-    await fetch("http://127.0.0.1:8011/artifacts/500/save", {
+    await fetch("http://127.0.0.1:8000/artifacts/500/save", {
       method: "POST",
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: formData,
@@ -419,6 +463,8 @@ test("lesson card completion and card-level quiz artifact save flow", async ({ p
 });
 
 test("tts guardrail does not speak transport/system error text", async ({ page }) => {
+  let authenticated = false;
+
   await page.addInitScript(() => {
     localStorage.setItem("autoSpeak", "true");
 
@@ -498,13 +544,26 @@ test("tts guardrail does not speak transport/system error text", async ({ page }
     window.WebSocket = MockWebSocket;
   });
 
-  await page.route("http://127.0.0.1:8011/**", async (route) => {
+  await page.route("http://127.0.0.1:8000/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const pathname = url.pathname;
 
     if (pathname === "/login" && request.method() === "POST") {
+      authenticated = true;
       await route.fulfill(buildJsonResponse({ access_token: "fake-jwt-token", token_type: "bearer", role: "student" }));
+      return;
+    }
+
+    if (pathname === "/auth/session" && request.method() === "GET") {
+      await route.fulfill(
+        buildJsonResponse(
+          authenticated
+            ? { authenticated: true, username: "student", role: "student" }
+            : { authenticated: false },
+          authenticated ? 200 : 401
+        )
+      );
       return;
     }
 
@@ -526,7 +585,7 @@ test("tts guardrail does not speak transport/system error text", async ({ page }
   await page.getByPlaceholder("Password").fill("student123");
   await page.getByRole("button", { name: "Continue" }).click();
 
-  await expect(page.getByRole("button", { name: /New Chat/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /New Chat/i }).first()).toBeVisible();
   await page.getByPlaceholder("Ask a question, request a summary, or work through a problem...").fill("What happened?");
   await page.getByRole("button", { name: "Send" }).click();
 

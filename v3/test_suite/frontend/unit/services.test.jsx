@@ -3,6 +3,8 @@ import {
   apiFetch,
   clearStoredSessionState,
   dispatchSessionExpired,
+  flushOfflineMutationQueue,
+  getOfflinePendingCount,
   getEnvelopeMessage,
   messageSummary,
   parseApiError,
@@ -124,6 +126,66 @@ describe("API service", () => {
     await expect(parseApiError(res1)).resolves.toBe("bad input");
     await expect(parseApiError(res2)).resolves.toBe("oops");
   });
+
+  it("queues mutation requests while offline", async () => {
+    Object.defineProperty(window.navigator, "onLine", {
+      configurable: true,
+      value: false,
+    });
+
+    const response = await apiFetch("/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Offline session" }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(getOfflinePendingCount()).toBe(1);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("returns cached GET response when network fetch fails", async () => {
+    fetch
+      .mockResolvedValueOnce({
+        status: 200,
+        ok: true,
+        clone: () => ({ json: async () => ({ items: [1, 2] }) }),
+      })
+      .mockRejectedValueOnce(new Error("offline"));
+
+    const onlineRes = await apiFetch("/languages", { method: "GET" });
+    expect(onlineRes.ok).toBe(true);
+
+    const cachedRes = await apiFetch("/languages", { method: "GET" });
+    const payload = await cachedRes.json();
+    expect(payload.items).toEqual([1, 2]);
+    expect(cachedRes.headers.get("X-Offline-Cache")).toBe("1");
+  });
+
+  it("flushes queued offline mutations after reconnect", async () => {
+    Object.defineProperty(window.navigator, "onLine", {
+      configurable: true,
+      value: false,
+    });
+
+    await apiFetch("/preferences", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ preferred_language: "hi" }),
+    });
+    expect(getOfflinePendingCount()).toBe(1);
+
+    Object.defineProperty(window.navigator, "onLine", {
+      configurable: true,
+      value: true,
+    });
+    fetch.mockResolvedValue({ status: 200, ok: true });
+
+    const result = await flushOfflineMutationQueue();
+    expect(result.flushed).toBe(1);
+    expect(result.remaining).toBe(0);
+    expect(getOfflinePendingCount()).toBe(0);
+  });
 });
 
 describe("WebSocket service", () => {
@@ -182,5 +244,31 @@ describe("WebSocket service", () => {
     expect(localStorage.getItem("token")).toBeNull();
     expect(expiredHandler).toHaveBeenCalledTimes(1);
     window.removeEventListener("session:expired", expiredHandler);
+  });
+
+  it("does not surface a connection warning for idle websocket errors", () => {
+    const cb = vi.fn();
+    const ws = connectWebSocket(cb, () => {}, "ask");
+
+    ws.onerror({ message: "idle reconnect noise" });
+
+    expect(cb).not.toHaveBeenCalledWith(
+      expect.stringContaining("Connection error while contacting the AI server")
+    );
+  });
+
+  it("surfaces a connection warning when an active chat request fails", () => {
+    const cb = vi.fn();
+    connectWebSocket(cb, () => {}, "ask");
+
+    sendMessage("ask", { query: "hello" });
+    const activeWs = connectWebSocket(cb, () => {}, "ask");
+    activeWs.__hasActivity = true;
+    activeWs.onerror({ message: "network failure" });
+
+    expect(cb).toHaveBeenCalledWith(
+      expect.stringContaining("Connection error while contacting the AI server")
+    );
+    expect(cb).toHaveBeenCalledWith("[END]");
   });
 });

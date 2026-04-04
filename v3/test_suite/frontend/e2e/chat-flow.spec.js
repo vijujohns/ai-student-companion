@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 
 test("chat sends and receives streamed reply", async ({ page }) => {
+  let authenticated = false;
+
   await page.addInitScript(() => {
     window.__mockSockets = [];
     const NativeWebSocket = window.WebSocket;
@@ -61,16 +63,30 @@ test("chat sends and receives streamed reply", async ({ page }) => {
     window.WebSocket = MockWebSocket;
   });
 
-  await page.route("http://127.0.0.1:8011/**", async (route) => {
+  await page.route("http://127.0.0.1:8000/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const pathname = url.pathname;
 
     if (pathname === "/login" && request.method() === "POST") {
+      authenticated = true;
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({ access_token: "fake-jwt-token", token_type: "bearer", role: "student" }),
+      });
+      return;
+    }
+
+    if (pathname === "/auth/session" && request.method() === "GET") {
+      await route.fulfill({
+        status: authenticated ? 200 : 401,
+        contentType: "application/json",
+        body: JSON.stringify(
+          authenticated
+            ? { authenticated: true, username: "student", role: "student" }
+            : { authenticated: false }
+        ),
       });
       return;
     }
@@ -93,7 +109,7 @@ test("chat sends and receives streamed reply", async ({ page }) => {
   await page.getByPlaceholder("Password").fill("student123");
   await page.getByRole("button", { name: "Continue" }).click();
 
-  await expect(page.getByRole("button", { name: /New Chat/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /New Chat/i }).first()).toBeVisible();
 
   await page.getByPlaceholder("Ask a question, request a summary, or work through a problem...").fill("What is AI?");
   await page.getByRole("button", { name: "Send" }).click();

@@ -178,6 +178,8 @@ class LessonStep(BaseModel):
     step_id: int = Field(...)
     title: str = Field(...)
     content: str = Field(...)
+    bullets: List[str] = Field(default_factory=list)
+    numbered: List[str] = Field(default_factory=list)
     status: Optional[str] = Field(None)
 
     model_config = ConfigDict(
@@ -186,6 +188,8 @@ class LessonStep(BaseModel):
                 "step_id": 1,
                 "title": "Introduction to Photosynthesis",
                 "content": "Photosynthesis is...",
+                "bullets": ["Plants use sunlight to make food."],
+                "numbered": [],
                 "status": "not_started"
             }
         }
