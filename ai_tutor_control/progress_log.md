@@ -72,6 +72,19 @@
 - Step 7 closed; Step 8 is now the next pending step.
 
 ## Step 8
+- Date: 2026-04-04
+- Status: Completed.
+- Confirmed Step 8 as the active non-approval-gated implementation step.
+- Added `v3/backend/app/modules/retrieval_orchestrator.py` to provide compatibility-first logical multi-index planning (`curriculum`, `upload`, `session`, `artifact`) and hybrid lexical + vector ranking.
+- Upgraded `v3/backend/app/modules/faiss_store.py` so `search()` now supports task-aware hybrid retrieval and optional detailed retrieval packets without breaking existing callers.
+- Integrated the retrieval upgrade into `v3/backend/app/modules/rag.py` so routed tasks now pass retrieval intent into the RAG search path.
+- Added focused backend coverage in `v3/test_suite/backend/test_retrieval_upgrade.py`.
+- No new dependencies were added; the hybrid lexical layer was implemented with the existing stack.
+- Full regression verification completed after the code change:
+  - Backend: `535 passed, 1 skipped, 3 warnings`
+  - Frontend unit: `169 passed`
+  - Frontend Playwright: `15 passed`
+- Step 8 closed; Step 9 is now the next pending step.
 
 ## Step 9
 

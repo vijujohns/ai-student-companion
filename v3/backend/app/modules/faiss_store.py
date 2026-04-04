@@ -10,6 +10,7 @@ import pickle
 import json
 
 from ..core.config_loader import get_rag_config
+from .retrieval_orchestrator import hybrid_rank_results
 
 # Paths
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
@@ -100,50 +101,36 @@ def _reset_store():
     _rebuild_index_from_documents()
 
 
-def search(query, filter_path=None, top_k=4, search_k=8):
+def search(
+    query,
+    filter_path=None,
+    top_k=4,
+    search_k=8,
+    task: str = "qa",
+    source_types=None,
+    return_details: bool = False,
+):
     if len(documents) == 0:
         return []
 
     q = model.encode([query])
-    D, I = index.search(np.array(q), max(search_k, top_k))
+    limit = min(len(documents), max(search_k, top_k, 1))
+    D, I = index.search(np.array(q), limit)
 
-    results = []
+    ranked = hybrid_rank_results(
+        query,
+        documents,
+        I[0] if len(I) else [],
+        D[0] if len(D) else [],
+        filter_path=filter_path,
+        top_k=top_k,
+        task=task,
+        source_types=source_types,
+    )
 
-    scored_results = []
-
-    for idx, i in enumerate(I[0]):
-        if i < len(documents):
-            doc = documents[i]
-
-            if isinstance(doc, str):
-                text = doc
-                source = None
-            else:
-                text = doc.get("text", "")
-                source = doc.get("source")
-
-            # 🔹 Apply filter
-            if filter_path and source != filter_path:
-                continue
-
-            # 🔥 Combine FAISS score + position score
-            distance_score = D[0][idx]
-            position_score = idx * 0.1  # earlier = better
-
-            final_score = distance_score + position_score
-
-            scored_results.append((final_score, text))
-
-    # 🔹 Sort by score (lower = better)
-    scored_results.sort(key=lambda x: x[0])
-
-    # 🔹 Take top-k best chunks
-    results = [text for _, text in scored_results[:top_k]]
-
-    if not results:
-        return []
-
-    return results
+    if return_details:
+        return ranked
+    return [item.get("text", "") for item in ranked if item.get("text")]
 
 
 def load_metadata():

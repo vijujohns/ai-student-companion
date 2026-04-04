@@ -170,6 +170,7 @@ def generate_answer(
         filter_path=session_content_path,
         top_k=top_k,
         search_k=max(8, top_k * 2),
+        task=normalized_task,
     )
     context_list = rank_chunks(enhanced_query, context_list)[:top_k]
 
@@ -315,6 +316,7 @@ def generate_answer_stream(
         filter_path=session_content_path,
         top_k=top_k,
         search_k=max(8, top_k * 2),
+        task=normalized_task,
     )
     context_list = rank_chunks(enhanced_query, context_list)[:top_k]
 
@@ -396,4 +398,4 @@ def retrieve_chunks(chapter: str, top_k: int = 5):
         source_matches.sort(reverse=True, key=lambda x: x[0])
         return [text for _, text in source_matches[:top_k]]
 
-    return search(query, top_k=top_k, search_k=max(8, top_k * 2))
+    return search(query, top_k=top_k, search_k=max(8, top_k * 2), task="lesson")

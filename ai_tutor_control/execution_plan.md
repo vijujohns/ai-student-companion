@@ -34,13 +34,14 @@ approval_required: false
 notes: Minimal `task_router` shell added behind `/ask` and `/ws/ask`; full regression suite verified green on 2026-04-04.
 
 Step 8: Retrieval Upgrade
-status: PENDING
+status: COMPLETED
 approval_required: false
-notes: Next active step after Step 7 completion.
+notes: Multi-index hybrid retrieval added behind the existing FAISS-backed RAG flow; full regression suite verified green on 2026-04-04.
 
 Step 9: Generators
 status: PENDING
 approval_required: false
+notes: Next active step after Step 8 completion.
 
 Step 10: Image Pipeline
 status: PENDING

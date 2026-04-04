@@ -17,3 +17,5 @@
 - No additional deferred recommendations were added during Step 6 approval closure.
 - Consider evolving `v3/backend/app/modules/task_router.py` from heuristic classification into a telemetry-backed executor dispatcher once Step 8 retrieval orchestration is in place.
 - Step 7 closure note: visual Playwright baselines were refreshed during the required full-suite validation after no UI contract breakage was observed.
+- Consider promoting the new hybrid retrieval weights and preferred source mixes into config so they can be tuned without code changes.
+- Consider adding richer citation/confidence metadata to the response envelope once the later generator/executor steps are complete.
