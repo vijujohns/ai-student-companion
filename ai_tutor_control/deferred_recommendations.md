@@ -15,3 +15,5 @@
 - No additional deferred recommendations were added during Step 5 approval closure.
 - Consider explicitly pinning runtime dependencies already relied on in the environment but not declared in `v3/backend/requirements.txt` (for example `python-multipart`, `passlib`, and any approved OCR/math packages) to improve reproducibility.
 - No additional deferred recommendations were added during Step 6 approval closure.
+- Consider evolving `v3/backend/app/modules/task_router.py` from heuristic classification into a telemetry-backed executor dispatcher once Step 8 retrieval orchestration is in place.
+- Step 7 closure note: visual Playwright baselines were refreshed during the required full-suite validation after no UI contract breakage was observed.

@@ -58,8 +58,15 @@ def clean_output(text: str) -> str:
     return " ".join(cleaned_words).strip()
 
 
-def _build_cache_key(user_id: str, session_id: str, query: str, model_name: str, session_content_ref: str) -> str:
-    raw = f"{user_id}:{session_id}:{query}:{model_name}:{session_content_ref}"
+def _build_cache_key(
+    user_id: str,
+    session_id: str,
+    query: str,
+    model_name: str,
+    session_content_ref: str,
+    task: str = "qa",
+) -> str:
+    raw = f"{user_id}:{session_id}:{query}:{model_name}:{session_content_ref}:{task or 'qa'}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
@@ -90,11 +97,13 @@ def generate_answer(
     session_id: str = None,
     model_name: str = None,
     session_content_override=_CONTENT_UNSET,
+    task: str = "qa",
 ) -> str:
     """Generate answer (non-streaming) with caching, history, and fallback."""
     t_start = time.perf_counter()
     if not session_id:
         session_id = f"{user_id}_default"
+    normalized_task = str(task or "qa").strip().lower() or "qa"
 
     dlog(
         "RAG",
@@ -103,6 +112,7 @@ def generate_answer(
         session=session_id,
         query=query[:120],
         requested_model=model_name or "auto",
+        task=normalized_task,
     )
 
     if session_content_override is _CONTENT_UNSET:
@@ -140,7 +150,7 @@ def generate_answer(
         except Exception:
             summary_context = ""
 
-    key = _build_cache_key(user_id, session_id, query, model_name, cache_content_ref)
+    key = _build_cache_key(user_id, session_id, query, model_name, cache_content_ref, normalized_task)
     cached = get_cache(key)
     if cached:
         elapsed = (time.perf_counter() - t_start) * 1000
@@ -176,7 +186,13 @@ def generate_answer(
         [f"user: {h['question']}\nassistant: {h['answer']}\n" for h in history_data]
     )
 
-    answer = generate_response(context=context, query=query, history=history_text, model_name=model_name)
+    answer = generate_response(
+        context=context,
+        query=query,
+        history=history_text,
+        model_name=model_name,
+        task=normalized_task,
+    )
 
     fallback_used = False
     if any(x in answer.lower() for x in ["could not find", "not found in the context", "not in the provided"]):
@@ -213,11 +229,19 @@ Answer:
     return answer
 
 
-def generate_answer_stream(query, user_id="default", session_id=None, model_name=None, session_content_override=_CONTENT_UNSET):
+def generate_answer_stream(
+    query,
+    user_id="default",
+    session_id=None,
+    model_name=None,
+    session_content_override=_CONTENT_UNSET,
+    task: str = "qa",
+):
     """Stream answer token-by-token (generator) with caching and fallback."""
     t_start = time.perf_counter()
     if not session_id:
         session_id = f"{user_id}_default"
+    normalized_task = str(task or "qa").strip().lower() or "qa"
 
     if session_content_override is _CONTENT_UNSET:
         conn = get_connection()
@@ -254,7 +278,7 @@ def generate_answer_stream(query, user_id="default", session_id=None, model_name
         except Exception:
             summary_context = ""
 
-    key = _build_cache_key(user_id, session_id, query, model_name, cache_content_ref)
+    key = _build_cache_key(user_id, session_id, query, model_name, cache_content_ref, normalized_task)
     cached = get_cache(key)
     if cached:
         save_chat(
@@ -303,7 +327,7 @@ def generate_answer_stream(query, user_id="default", session_id=None, model_name
     )
 
     full_response = ""
-    for token in generate_response_stream(context, query, history_text, model_name):
+    for token in generate_response_stream(context, query, history_text, model_name, task=normalized_task):
         yield token
         full_response += token
 

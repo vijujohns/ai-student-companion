@@ -35,7 +35,8 @@ def extract_text_from_pdf(file_path):
             pages.append(page_text)
 
     text = "\n\n".join(pages)
-    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"\s*\n+\s*", " ", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
     return text.strip()
 
 

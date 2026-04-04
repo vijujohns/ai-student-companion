@@ -57,6 +57,19 @@
 - Approval received from user; Step 6 closed without starting Step 7.
 
 ## Step 7
+- Date: 2026-04-04
+- Status: Completed.
+- Confirmed Step 7 as the active non-approval-gated implementation step.
+- Added `v3/backend/app/modules/task_router.py` as a compatibility-first routing shell that classifies `/ask` and `/ws/ask` requests into existing task categories (`qa`, `summary`, `lesson`, `quiz`, `flashcards`, etc.).
+- Integrated the router minimally into `v3/backend/app/api/routes.py` and `v3/backend/app/api/websocket.py` without changing the public response envelope.
+- Extended `v3/backend/app/modules/rag.py` with optional task-aware model selection and task-aware cache keys so routed requests do not collide in cache.
+- Added focused backend coverage in `v3/test_suite/backend/test_task_router.py`.
+- Full regression verification completed after the code change:
+  - Backend: `533 passed, 1 skipped, 3 warnings`
+  - Frontend unit: `169 passed`
+  - Frontend Playwright: `15 passed`
+- During the required full test run, one unrelated backend regression surfaced in `extract_text_from_pdf`; it was fixed minimally by normalizing leftover line-break whitespace in `v3/backend/app/modules/ingestion.py`.
+- Step 7 closed; Step 8 is now the next pending step.
 
 ## Step 8
 

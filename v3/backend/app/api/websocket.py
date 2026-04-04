@@ -17,6 +17,7 @@ from ..modules.quiz import get_quiz, submit_quiz_answer
 from ..modules.ws_auth import require_websocket_auth, authenticate_websocket, get_requested_subprotocol
 from ..modules.policy import consume_quota, release_usage
 from ..modules.messages import get_message
+from ..modules.task_router import route_task
 from ..core.debug_logger import dlog, dwarn, derror
 import asyncio, json, traceback
 
@@ -120,11 +121,13 @@ async def websocket_ask(ws: WebSocket):
                 session_id = payload.get("session_id", "default")
                 model_name = payload.get("model_name")
                 context_id = payload.get("context_id")
+                requested_task = payload.get("task") or payload.get("mode")
             except Exception:
                 query = data
                 session_id = "default"
                 model_name = None
                 context_id = None
+                requested_task = None
 
             dlog("WS", "Query received /ws/ask",
                  user=user["username"],
@@ -149,21 +152,38 @@ async def websocket_ask(ws: WebSocket):
                 continue
 
             # -------- Stream Response --------
+            routed_task = route_task(
+                query=query or "",
+                route="/ws/ask",
+                requested_task=requested_task,
+                model_name=model_name,
+                content_id=context_id,
+            )
             full_response = ""
             token_count = 0
             keepalive_stop = asyncio.Event()
             keepalive_task = asyncio.create_task(send_waiting_status(ws, keepalive_stop))
             await send_json(ws, {"type": "status", "data": "Preparing your answer..."})
             try:
-                async for token in async_stream_wrapper(
-                    generate_answer_stream(
+                if routed_task.model_task == "qa":
+                    stream_source = generate_answer_stream(
                         query,
                         user["username"],
                         session_id,
                         model_name,
                         session_content_override=context_id,
                     )
-                ):
+                else:
+                    stream_source = generate_answer_stream(
+                        query=query,
+                        user_id=user["username"],
+                        session_id=session_id,
+                        model_name=model_name,
+                        session_content_override=context_id,
+                        task=routed_task.model_task,
+                    )
+
+                async for token in async_stream_wrapper(stream_source):
                     full_response += token
                     token_count += 1
                     if not await send_json(ws, {"type": "chunk", "data": token}):

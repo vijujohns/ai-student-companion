@@ -226,6 +226,7 @@ class AskRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=5000, description="The question to ask")
     session_id: Optional[str] = Field(None, max_length=100, description="Session ID (optional)")
     model_name: Optional[str] = Field(None, max_length=50, description="LLM model to use (optional)")
+    task: Optional[str] = Field(None, max_length=50, description="Optional task hint such as qa, summary, lesson, or quiz")
     content_id: Optional[str] = Field(None, min_length=1, max_length=1000, description="Selected content reference (optional)")
 
     model_config = ConfigDict(
@@ -234,6 +235,7 @@ class AskRequest(BaseModel):
                 "query": "Explain photosynthesis",
                 "session_id": "uuid-here",
                 "model_name": "tinyllama",
+                "task": "summary",
                 "content_id": "kb:Q2xhc3MtMTAvQmlvbG9neS9DaGFwdGVyLTUvbm90ZXMucGRm"
             }
         }

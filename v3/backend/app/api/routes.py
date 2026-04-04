@@ -62,6 +62,7 @@ from ..modules.artifacts import (
     delete_flashcard_session,
 )
 from ..modules.model_manager import get_active_model_profile_key, get_model_profiles, set_active_model_profile_key
+from ..modules.task_router import route_task
 
 # ✅ Import Pydantic schemas for validation
 from ..schemas.request import (
@@ -218,16 +219,28 @@ def ask(request: AskRequest, user=Depends(get_current_user)):
     if not session_id:
         session_id = str(uuid.uuid4())
 
+    routed_task = route_task(
+        query=query,
+        route="/ask",
+        requested_task=request.task,
+        model_name=model_name,
+        content_id=request.content_id,
+    )
+
     _consume_quota_or_raise(user, "ask")
 
     try:
-        ans = generate_answer(
-            query=query,
-            user_id=user["username"],
-            session_id=session_id,
-            model_name=model_name,
-            session_content_override=request.content_id,
-        )
+        generate_kwargs = {
+            "query": query,
+            "user_id": user["username"],
+            "session_id": session_id,
+            "model_name": model_name,
+            "session_content_override": request.content_id,
+        }
+        if routed_task.model_task != "qa":
+            generate_kwargs["task"] = routed_task.model_task
+
+        ans = generate_answer(**generate_kwargs)
     except Exception:
         release_usage(user["username"], "ask")
         raise

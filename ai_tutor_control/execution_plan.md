@@ -29,12 +29,14 @@ approval_required: true
 notes: Dependency report documented, approved, and completed on 2026-04-04.
 
 Step 7: Task Router Implementation
-status: PENDING
+status: COMPLETED
 approval_required: false
+notes: Minimal `task_router` shell added behind `/ask` and `/ws/ask`; full regression suite verified green on 2026-04-04.
 
 Step 8: Retrieval Upgrade
 status: PENDING
 approval_required: false
+notes: Next active step after Step 7 completion.
 
 Step 9: Generators
 status: PENDING
