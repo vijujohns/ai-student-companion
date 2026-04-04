@@ -29,6 +29,13 @@
 - Approval received from user; Step 3 closed without starting Step 4.
 
 ## Step 4
+- Date: 2026-04-04
+- Status: Completed after user approval.
+- Confirmed Step 4 as the active step and kept `execution_plan.md` at `IN PROGRESS` until approval.
+- Defined a safe, additive upgrade sequence that preserves current routes, sessions, auth, quotas, and UI flows.
+- Kept the plan focused on compatibility-first rollout with feature flags and validation gates.
+- Saved the plan in `ai_tutor_control/architecture.md`.
+- Approval received from user; Step 4 closed without starting Step 5.
 
 ## Step 5
 

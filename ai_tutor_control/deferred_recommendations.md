@@ -9,3 +9,5 @@
 - No additional deferred recommendations were added during Step 2 approval closure.
 - Consider introducing all new orchestration layers behind existing service ports first, to preserve current route contracts and reduce migration risk.
 - No additional deferred recommendations were added during Step 3 approval closure.
+- Consider using feature flags or configuration toggles for each refactor slice so old and new orchestration paths can run side-by-side during rollout.
+- No additional deferred recommendations were added during Step 4 approval closure.

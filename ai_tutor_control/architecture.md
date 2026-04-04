@@ -396,3 +396,161 @@ This gives modular behavior without forcing a UI or API rewrite.
 
 ### Step 3 Conclusion
 The recommended architecture is a **modular orchestration layer** built on top of the current monolith: a **multi-modal ingestion orchestrator**, a **multi-index retrieval orchestrator**, and a **task router** that dispatches to existing and future executors. Approval is required before Step 3 can be marked completed or before moving to Step 4.
+
+## Step 4 - Refactor Plan
+
+Date: 2026-04-04
+Status: Planned and awaiting approval.
+
+### Objective
+Define a safe, non-breaking sequence for implementing the approved architecture while preserving all current route contracts and behavior.
+
+### Safety Rules for the Refactor
+- No removal of existing endpoints during the rollout.
+- No changes to current request/response envelopes unless backward-compatible.
+- New orchestration layers must sit **behind** the current API and service interfaces.
+- Each slice must be independently verifiable and reversible.
+
+---
+
+### Safe Upgrade Steps
+
+#### Phase 1 — Add contracts and scaffolding only
+**Goal:** introduce new module boundaries without changing runtime behavior.
+
+Planned additions:
+- `task_router.py`
+- `task_contracts.py`
+- `retrieval_orchestrator.py`
+- `ingestion_orchestrator.py`
+- executor/retriever/parser package folders
+
+Safety approach:
+- wire nothing into existing routes yet
+- keep all current calls pointed at the old modules
+- add compatibility wrappers only
+
+Expected impact:
+- zero behavior change
+- zero API change
+
+---
+
+#### Phase 2 — Introduce the task-router shell behind chat entrypoints
+**Goal:** route `/ask` and `/ws/ask` through a thin compatibility router that still defaults to the current Q&A path.
+
+Steps:
+1. Add router classification helpers.
+2. Default all ambiguous requests to the current `qa` flow.
+3. Reuse existing `rag.generate_answer()` and `generate_answer_stream()` underneath.
+4. Preserve current envelope and session persistence.
+
+Safety approach:
+- old behavior remains the fallback
+- no lesson/quiz/flashcard routes are changed in this phase
+
+Expected impact:
+- architecture insertion only
+- no visible regression if router falls back correctly
+
+---
+
+#### Phase 3 — Introduce retrieval orchestrator using FAISS as the baseline backend
+**Goal:** centralize retrieval planning without replacing the existing index implementation.
+
+Steps:
+1. Wrap the current FAISS search in a retriever adapter.
+2. Add logical source scopes:
+   - curriculum
+   - uploads
+   - session memory
+   - artifacts
+3. Preserve the current `top_k`, filtering, and summary behavior.
+4. Keep `rag.py` working while delegating retrieval selection to the orchestrator.
+
+Safety approach:
+- FAISS remains the primary retrieval engine at first
+- no external dependency is required for the first slice
+- existing relevance behavior remains the default fallback
+
+Expected impact:
+- better structure before any quality changes
+- no breaking route or schema change
+
+---
+
+#### Phase 4 — Wrap ingestion behind a multi-modal orchestrator
+**Goal:** keep current PDF/OCR support working while moving dispatch logic into a dedicated orchestrator.
+
+Steps:
+1. Add a central ingestion entrypoint.
+2. Route PDF ingestion to the current `ingestion.py` path.
+3. Route image ingestion to the current `ocr.py` + `ingest_image()` path.
+4. Add metadata normalization for future indexing improvements.
+
+Safety approach:
+- existing upload endpoints stay unchanged
+- current file storage and indexing job recovery remain intact
+
+Expected impact:
+- cleaner structure for future image/diagram handling
+- no user-facing contract changes
+
+---
+
+#### Phase 5 — Move generation modules behind task executors
+**Goal:** let the router call executors instead of directly calling domain modules, while still reusing the same logic.
+
+Executors to add:
+- chat executor
+- lesson executor
+- quiz executor
+- flashcard executor
+- assessment executor
+- translation executor
+
+Safety approach:
+- executors call the current modules (`lesson_plan.py`, `quiz.py`, `flashcards.py`, `assessment.py`, `translation.py`)
+- implementation remains additive, not replacement-first
+
+Expected impact:
+- clearer orchestration layer
+- easier future specialization without changing routes
+
+---
+
+#### Phase 6 — Add the specialized math path last
+**Goal:** introduce a dedicated math executor only after the shared routing/retrieval scaffolding is stable.
+
+Steps:
+1. Add math-specific task classification.
+2. Route only math requests into the math executor.
+3. Keep fallback to the standard Q&A flow if the math path is unavailable.
+
+Safety approach:
+- math is opt-in and isolated
+- no regression to normal tutoring flow
+
+Expected impact:
+- fills the identified missing capability without destabilizing core tutoring
+
+---
+
+### Rollout and Validation Strategy
+For each phase:
+1. add scaffolding
+2. wire behind a compatibility layer
+3. preserve old behavior as fallback
+4. validate the full existing test suite once code changes begin
+5. only then move to the next slice
+
+### What must remain stable throughout
+- `/ask` and `/ws/ask`
+- session CRUD and content linking
+- login/auth/session-cookie flow
+- lesson/quiz/flashcard generation behavior
+- file upload and indexing workflow
+- progress, subscription, and collaboration routes
+
+### Step 4 Conclusion
+The safest plan is a **compatibility-first, additive rollout**: add scaffolding first, insert thin orchestration layers second, and only then move specialized behavior behind them. No breaking changes are planned in the refactor sequence. Approval is required before Step 4 can be marked completed or before moving to Step 5.
