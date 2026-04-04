@@ -3,25 +3,80 @@ from .db import get_connection
 from .rag import retrieve_chunks
 from .model_manager import generate_response
 import json
+import re
+
+
+def _safe_options(raw_options) -> list[str]:
+    options = [str(option).strip() for option in (raw_options or []) if str(option).strip()]
+    fallback = ["A", "B", "C", "D"]
+    while len(options) < 4:
+        options.append(fallback[len(options)])
+    return options[:4]
+
+
+def _normalize_answer_label(raw_answer, options: list[str]) -> str:
+    answer = str(raw_answer or "A").strip()
+    if not answer:
+        return "A"
+    upper = answer.upper()
+    if upper in {"A", "B", "C", "D"}:
+        return upper
+    for idx, option in enumerate(options[:4]):
+        if answer.lower() == str(option).strip().lower():
+            return chr(ord("A") + idx)
+    return "A"
+
+
+def _extract_quiz_json(raw_text) -> dict:
+    if isinstance(raw_text, dict):
+        return raw_text
+    if isinstance(raw_text, list):
+        return {"questions": raw_text}
+
+    text = str(raw_text or "").strip()
+    if not text:
+        return {"questions": []}
+
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE).strip()
+        text = re.sub(r"\s*```$", "", text).strip()
+
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else {"questions": parsed if isinstance(parsed, list) else []}
+    except Exception:
+        match = re.search(r"(\{.*\}|\[.*\])", text, flags=re.DOTALL)
+        if match:
+            try:
+                parsed = json.loads(match.group(1))
+                return parsed if isinstance(parsed, dict) else {"questions": parsed if isinstance(parsed, list) else []}
+            except Exception:
+                pass
+    return {"questions": []}
 
 
 def _normalize_questions(raw_questions, num_questions: int = 5):
     """Normalize generated questions into a stable structure."""
     questions = []
-    for idx, item in enumerate(raw_questions[:num_questions], start=1):
+    for idx, item in enumerate((raw_questions or [])[:num_questions], start=1):
         if not isinstance(item, dict):
             continue
 
-        options = item.get("options", ["A", "B", "C", "D"])
-        if not isinstance(options, list) or len(options) == 0:
-            options = ["A", "B", "C", "D"]
+        options = _safe_options(item.get("options", ["A", "B", "C", "D"]))
+        correct_label = _normalize_answer_label(
+            item.get("correct_answer") or item.get("correct_option") or item.get("answer"),
+            options,
+        )
+        explanation = str(item.get("explanation") or item.get("reason") or "Based on the provided study material.").strip()
 
         questions.append(
             {
                 "id": f"q{idx}",
-                "question": item.get("question", f"Question {idx}"),
+                "question": str(item.get("question") or f"Question {idx}").strip(),
                 "options": options,
-                "correct_option": item.get("answer", "A"),
+                "correct_option": correct_label,
+                "correct_answer": correct_label,
+                "explanation": explanation,
             }
         )
 
@@ -34,6 +89,8 @@ def _normalize_questions(raw_questions, num_questions: int = 5):
                 "question": f"Practice question {idx}",
                 "options": ["A", "B", "C", "D"],
                 "correct_option": "A",
+                "correct_answer": "A",
+                "explanation": "Based on the available study material.",
             }
         )
 
@@ -61,20 +118,31 @@ def generate_quiz(
     focus_line = f"Focus on: {focus}" if focus else ""
 
     prompt = (
-        f"Generate {num_questions} quiz questions as JSON for chapter: {chapter}.\n"
+        f"Create {num_questions} multiple-choice quiz questions using ONLY the provided context for chapter: {chapter}.\n"
         f"{focus_line}\n"
-        f"Context: {context}\n"
-        f'Return only: {{"questions":[{{"question":"...","options":["a","b","c","d"],"answer":"correct_option"}}]}}'
+        "Return ONLY valid JSON in this exact structure:\n"
+        '{"questions":[{"question":"...","options":["A","B","C","D"],"correct_answer":"A","explanation":"..."}]}\n'
+        "RULES:\n"
+        "- Every question must be answerable from the context only.\n"
+        "- Always include exactly 4 options.\n"
+        "- Always include correct_answer and explanation.\n"
+        "- Do not add commentary outside the JSON.\n"
+        f"Context:\n{context}\n"
     )
 
     try:
         quiz_text = generate_response(context=context, query=prompt, model_name=model_name, task="quiz")
-        quiz_json = json.loads(quiz_text)
+        quiz_json = _extract_quiz_json(quiz_text)
     except Exception:
         # Fallback quiz if LLM fails
         quiz_json = {
             "questions": [
-                {"question": f"What is the main point of {chapter}?", "options": ["A", "B", "C", "D"], "answer": "A"}
+                {
+                    "question": f"What is the main point of {chapter}?",
+                    "options": ["A", "B", "C", "D"],
+                    "correct_answer": "A",
+                    "explanation": "Based on the available study material.",
+                }
                 for _ in range(num_questions)
             ]
         }

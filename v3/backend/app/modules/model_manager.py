@@ -344,30 +344,19 @@ def build_prompt(context, query, history, task):
 You are an AI tutor helping a student based ONLY on the provided study material.
 
 STRICT RULES (MUST FOLLOW):
-1. Answer ONLY using the provided context.
-2. Do NOT use outside knowledge if context exists.
-3. If the answer is NOT clearly available in the context:
-   Say EXACTLY:
-   "I could not find this in the provided study material."
-   Do NOT attempt to guess or generate an answer.
+1. You must answer ONLY using the provided context.
+2. Do NOT use outside knowledge.
+3. If the answer is not present in the context, say EXACTLY:
+   "I don't have enough information in the provided material."
+4. Do NOT guess, infer beyond the context, or add facts from memory.
+5. Keep the answer concise, clear, and student-friendly.
+6. When helpful, you may mention the chunk number used, for example `(Chunk 2)`.
 
-4. Do NOT generate extra questions.
-5. Do NOT continue conversation.
-6. Give only ONE clear answer.
-
-FORMAT:
-- Keep answer simple and student-friendly.
-- Use short paragraphs or bullet points if helpful.
-
----------------------
-Context:
 {context}
 
----------------------
 Question:
 {query}
 
----------------------
 Answer:
 """
     else:
@@ -460,6 +449,15 @@ def decide_model(task: str, query: str, context: str = "") -> str:
 # -------------------------
 # Unified Response Generator
 # -------------------------
+def _safe_generation_fallback(task: str = "qa") -> str:
+    normalized_task = str(task or "qa").strip().lower() or "qa"
+    if normalized_task == "quiz":
+        return '{"questions":[{"question":"Practice question 1","options":["A","B","C","D"],"correct_answer":"A","explanation":"A safe fallback response was returned because generation was temporarily unavailable."}]}'
+    if normalized_task == "summary":
+        return "I couldn't generate a grounded summary right now. Please try again."
+    return "I couldn't generate a response right now. Please try again."
+
+
 def generate_response(context: str, query: str, history: str = "", model_name: str = None, task: str = "qa") -> str:
 
     model_name = resolve_model_name(model_name, task, query, context)
@@ -485,25 +483,29 @@ def generate_response(context: str, query: str, history: str = "", model_name: s
 
     # -------- LOCAL --------
     if model_config["type"] == "local":
-        model_path = _resolve_model_path(model_config)
-        lock = _get_llm_lock(model_path)
-        llm = get_llm_instance(model_config)
-        t0 = time.perf_counter()
-        with lock:
-            output = llm(
-                prompt,
-                max_tokens=model_config.get("max_tokens", 300),
-                temperature=model_config.get("temperature", 0.7),
-                stop=["Question:", "---------------------", "</s>"]
-            )
-        elapsed = (time.perf_counter() - t0) * 1000
-        result = output["choices"][0]["text"].strip()
-        dlog("MODEL", "Local model response",
-             model=model_name,
-             elapsed_ms=f"{elapsed:.1f}ms",
-             response_chars=len(result),
-             response_preview=result[:100])
-        return result
+        try:
+            model_path = _resolve_model_path(model_config)
+            lock = _get_llm_lock(model_path)
+            llm = get_llm_instance(model_config)
+            t0 = time.perf_counter()
+            with lock:
+                output = llm(
+                    prompt,
+                    max_tokens=model_config.get("max_tokens", 300),
+                    temperature=model_config.get("temperature", 0.7),
+                    stop=["Question:", "---------------------", "</s>"]
+                )
+            elapsed = (time.perf_counter() - t0) * 1000
+            result = output["choices"][0]["text"].strip()
+            dlog("MODEL", "Local model response",
+                 model=model_name,
+                 elapsed_ms=f"{elapsed:.1f}ms",
+                 response_chars=len(result),
+                 response_preview=result[:100])
+            return result
+        except Exception as exc:
+            derror("MODEL", f"Local generation failed: {exc}", model=model_name, task=task)
+            return _safe_generation_fallback(task)
 
     # -------- CLOUD --------
     elif model_config["type"] == "cloud":
@@ -517,20 +519,25 @@ def generate_response(context: str, query: str, history: str = "", model_name: s
                  max_tokens=model_config.get("max_tokens", 500),
                  temperature=model_config.get("temperature", 0.7))
             t0 = time.perf_counter()
-            response = openai.chat.completions.create(
-                model=model_config["model_name"],
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=model_config.get("max_tokens", 500),
-                temperature=model_config.get("temperature", 0.7)
-            )
-            elapsed = (time.perf_counter() - t0) * 1000
-            result = response.choices[0].message.content.strip()
-            dlog("MODEL", "Cloud model response",
-                 model=model_config["model_name"],
-                 elapsed_ms=f"{elapsed:.1f}ms",
-                 response_chars=len(result),
-                 response_preview=result[:100])
-            return result
+            try:
+                response = openai.chat.completions.create(
+                    model=model_config["model_name"],
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=model_config.get("max_tokens", 500),
+                    temperature=model_config.get("temperature", 0.7),
+                    timeout=float(os.getenv("OPENAI_TIMEOUT_SECONDS", "60")),
+                )
+                elapsed = (time.perf_counter() - t0) * 1000
+                result = response.choices[0].message.content.strip()
+                dlog("MODEL", "Cloud model response",
+                     model=model_config["model_name"],
+                     elapsed_ms=f"{elapsed:.1f}ms",
+                     response_chars=len(result),
+                     response_preview=result[:100])
+                return result
+            except Exception as exc:
+                derror("MODEL", f"Cloud generation failed: {exc}", model=model_config["model_name"], task=task)
+                return _safe_generation_fallback(task)
 
     raise ValueError("Unsupported model")
 
@@ -590,7 +597,7 @@ def generate_response_stream(context: str, query: str, history: str = "", model_
 
         except Exception as e:
             derror("MODEL", f"Streaming error: {e}", model=model_name)
-            yield f"\n[ERROR: {str(e)}]\n"
+            yield _safe_generation_fallback(task)
 
     elif model_config["type"] == "cloud":
         # Keep stream contract by chunking the cloud fallback response.

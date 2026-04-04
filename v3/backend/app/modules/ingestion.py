@@ -115,6 +115,92 @@ def chunk_text(text, chunk_size=None, overlap=None):
     return chunks
 
 
+_CHUNK_TYPE_PATTERNS = {
+    "formula": (
+        r"\bformula\b",
+        r"\bsolve\b",
+        r"\bequation\b",
+        r"=",
+        r"\b[a-zA-Z]\s*[+\-*/^]\s*\d",
+        r"\b\d+\s*[+\-*/^]\s*\d+",
+    ),
+    "question": (
+        r"\?$",
+        r"\bwhat\b",
+        r"\bwhy\b",
+        r"\bhow\b",
+        r"\bwhich\b",
+        r"\bmcq\b",
+    ),
+    "definition": (
+        r"\bis defined as\b",
+        r"\brefers to\b",
+        r"\bmeans\b",
+        r"\bdefinition\b",
+    ),
+    "example": (
+        r"\bfor example\b",
+        r"\bexample\b",
+        r"\bsuch as\b",
+        r"\be\.g\.\b",
+    ),
+}
+
+
+def classify_chunk_type(text: str) -> str:
+    sample = str(text or "").strip().lower()
+    if not sample:
+        return "concept"
+
+    for chunk_type, patterns in _CHUNK_TYPE_PATTERNS.items():
+        if any(re.search(pattern, sample, flags=re.IGNORECASE) for pattern in patterns):
+            return chunk_type
+    return "concept"
+
+
+def _infer_chapter_from_path(source_path: str) -> str:
+    normalized = os.path.normpath(str(source_path or ""))
+    stem = os.path.splitext(os.path.basename(normalized))[0].strip()
+    parent = os.path.basename(os.path.dirname(normalized)).strip()
+    return stem or parent or "general"
+
+
+def _infer_topic_from_text(text: str, fallback: str = "general") -> str:
+    cleaned = str(text or "").replace("\r", "\n")
+    cleaned = re.sub(r"^(document|image|source|chunk|keywords|ocr summary)\s*:\s*", "", cleaned, flags=re.IGNORECASE)
+    first_line = next((line.strip() for line in cleaned.splitlines() if line.strip()), "")
+    first_sentence = re.split(r"(?<=[.!?])\s+", first_line or cleaned.strip())[0].strip()
+    candidate = re.sub(r"\s+", " ", first_sentence).strip(" :-") or str(fallback or "general")
+    if len(candidate) > 80:
+        candidate = candidate[:80].rsplit(" ", 1)[0].strip() or candidate[:80].strip()
+    return candidate or str(fallback or "general")
+
+
+def _logical_index_for_type(chunk_type: str, modality: str = "text") -> str:
+    if str(modality or "text").strip().lower() == "image":
+        return "image_index"
+    normalized = str(chunk_type or "concept").strip().lower()
+    if normalized == "formula":
+        return "formula_index"
+    if normalized == "question":
+        return "qa_index"
+    if normalized == "definition":
+        return "summary_index"
+    return "concept_index"
+
+
+def build_chunk_metadata(text: str, source_path: str, *, modality: str = "text") -> dict:
+    chapter = _infer_chapter_from_path(source_path)
+    chunk_type = classify_chunk_type(text)
+    return {
+        "chapter": chapter,
+        "topic": _infer_topic_from_text(text, fallback=chapter),
+        "type": chunk_type,
+        "index_name": _logical_index_for_type(chunk_type, modality=modality),
+        "modality": str(modality or "text").strip().lower() or "text",
+    }
+
+
 # ----------------- Summary Storage -----------------
 def save_summary(pdf_path, summary):
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -235,7 +321,11 @@ def ingest_pdf(file_path, model_name=None):
             f"Source: {source_name}\n"
             f"Chunk {index}:\n{chunk}"
         )
-        add_doc(enriched_chunk, source=file_path)
+        add_doc(
+            enriched_chunk,
+            source=file_path,
+            metadata=build_chunk_metadata(chunk, file_path, modality="text"),
+        )
 
     print(f"✅ Ingested {len(chunks)} chunks + summary successfully")
 
@@ -278,7 +368,10 @@ def ingest_image(file_path: str, model_name=None) -> None:
             f"OCR Summary: {summary or 'No summary available.'}\n"
             f"Chunk {index}:\n{chunk}"
         )
-        add_doc(enriched_chunk, source=file_path)
+        chunk_metadata = build_chunk_metadata(chunk, file_path, modality="image")
+        chunk_metadata["topic"] = title or chunk_metadata.get("topic") or "image"
+        chunk_metadata["keywords"] = [str(item) for item in keywords]
+        add_doc(enriched_chunk, source=file_path, metadata=chunk_metadata)
 
     print(f"✅ Ingested {len(chunks)} OCR chunks from image successfully")
 

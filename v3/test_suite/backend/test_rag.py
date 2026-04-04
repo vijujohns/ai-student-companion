@@ -145,14 +145,13 @@ class TestGenerateAnswer:
 
     @patch("app.modules.rag.get_cache")
     @patch("app.modules.rag.set_cache")
-    @patch("app.modules.rag.retrieve_chunks")
+    @patch("app.modules.rag.search", return_value=["Relevant study material about the test query."])
     @patch("app.modules.rag.generate_response")
     @patch("app.modules.rag.get_connection")
-    def test_generate_answer_caches_new_result(self, mock_conn, mock_gen, mock_retrieve, mock_set_cache, mock_get_cache):
+    def test_generate_answer_caches_new_result(self, mock_conn, mock_gen, mock_search, mock_set_cache, mock_get_cache):
         """Verify new answers are cached."""
         mock_get_cache.return_value = None
-        mock_retrieve.return_value = ["chunk1", "chunk2"]
-        mock_gen.return_value = "Generated answer"
+        mock_gen.return_value = "Relevant study material about the test query."
         
         mock_db = MagicMock()
         mock_cursor = MagicMock()
@@ -162,7 +161,7 @@ class TestGenerateAnswer:
         
         result = generate_answer("test query", "user1", "session1")
         
-        assert result == "Generated answer"
+        assert result == "Relevant study material about the test query."
         mock_set_cache.assert_called_once()
 
     @patch("app.modules.rag.get_cache")
@@ -183,6 +182,64 @@ class TestGenerateAnswer:
         result = generate_answer("test", "user1", "session1")
         # Should return something, not raise
         assert isinstance(result, str) or result is None
+
+    @patch("app.modules.rag.get_cache", return_value=None)
+    @patch("app.modules.rag.set_cache")
+    @patch("app.modules.rag.save_chat")
+    @patch("app.modules.rag.get_history", return_value=[])
+    @patch("app.modules.rag.search", return_value=["Refraction is the bending of light when it passes from one medium to another."])
+    @patch("app.modules.rag.get_connection")
+    @patch("app.modules.rag.generate_response", return_value="I could not find this in the provided study material.")
+    def test_generate_answer_keeps_grounded_no_info_response(self, mock_generate, mock_conn, mock_search, mock_history, mock_save_chat, mock_set_cache, mock_get_cache):
+        mock_db = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None
+        mock_db.cursor.return_value = mock_cursor
+        mock_conn.return_value = mock_db
+
+        result = generate_answer("What is refraction?", "user1", "session1")
+
+        assert result == "I don't have enough information in the provided material."
+        assert mock_generate.call_count == 1
+
+    @patch("app.modules.rag.get_cache", return_value=None)
+    @patch("app.modules.rag.set_cache")
+    @patch("app.modules.rag.save_chat")
+    @patch("app.modules.rag.get_history", return_value=[])
+    @patch("app.modules.rag.search", return_value=["Refraction is the bending of light when it passes from one medium to another.", "Light changes direction at the boundary."])
+    @patch("app.modules.rag.get_connection")
+    @patch("app.modules.rag.generate_response", return_value="The capital of France is Paris.")
+    def test_generate_answer_rejects_ungrounded_response(self, mock_generate, mock_conn, mock_search, mock_history, mock_save_chat, mock_set_cache, mock_get_cache):
+        mock_db = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None
+        mock_db.cursor.return_value = mock_cursor
+        mock_conn.return_value = mock_db
+
+        result = generate_answer("What is refraction?", "user1", "session1")
+
+        assert result == "I don't have enough information in the provided material."
+
+    @patch("app.modules.rag.get_cache", return_value=None)
+    @patch("app.modules.rag.set_cache")
+    @patch("app.modules.rag.save_chat")
+    @patch("app.modules.rag.get_history", return_value=[])
+    @patch("app.modules.rag.search", return_value=["Refraction is the bending of light.", "It happens when light moves between media."])
+    @patch("app.modules.rag.get_connection")
+    def test_generate_answer_formats_context_boundaries(self, mock_conn, mock_search, mock_history, mock_save_chat, mock_set_cache, mock_get_cache):
+        mock_db = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None
+        mock_db.cursor.return_value = mock_cursor
+        mock_conn.return_value = mock_db
+
+        with patch("app.modules.rag.generate_response", return_value="Refraction is the bending of light.") as mock_generate:
+            generate_answer("What is refraction?", "user1", "session1")
+
+        used_context = mock_generate.call_args.kwargs["context"]
+        assert "[CONTEXT START]" in used_context
+        assert "Chunk 1:" in used_context
+        assert "[CONTEXT END]" in used_context
 
 
 class TestGenerateAnswerStream:

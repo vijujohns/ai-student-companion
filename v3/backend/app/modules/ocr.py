@@ -18,6 +18,33 @@ from typing import Dict
 
 logger = logging.getLogger(__name__)
 
+
+class _MissingImageModule:
+    @staticmethod
+    def open(*args, **kwargs):
+        raise RuntimeError("Pillow is not installed")
+
+
+class _MissingPytesseractModule:
+    @staticmethod
+    def get_tesseract_version():
+        raise RuntimeError("pytesseract is not installed")
+
+    @staticmethod
+    def image_to_string(*args, **kwargs):
+        raise RuntimeError("pytesseract is not installed")
+
+
+try:
+    from PIL import Image  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    Image = _MissingImageModule()  # type: ignore
+
+try:
+    import pytesseract  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    pytesseract = _MissingPytesseractModule()  # type: ignore
+
 # ---------------------------------------------------------------------------
 # Supported image extensions / MIME types
 # ---------------------------------------------------------------------------
@@ -41,7 +68,8 @@ _MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB safety cap
 def _check_ocr_available() -> bool:
     """Return True if pytesseract and Tesseract binary are reachable."""
     try:
-        import pytesseract  # noqa: F401
+        if not hasattr(pytesseract, "get_tesseract_version"):
+            return False
         pytesseract.get_tesseract_version()
         return True
     except Exception:
@@ -118,16 +146,20 @@ def extract_text_from_image(file_path: str, lang: str = "eng") -> str:
         return ""
 
     try:
-        from PIL import Image  # type: ignore
-        import pytesseract  # type: ignore
+        if not hasattr(Image, "open") or not hasattr(pytesseract, "image_to_string"):
+            logger.warning("OCR dependencies are unavailable for %s", file_path)
+            return ""
 
+        logger.info("Image extracted for OCR: %s", file_path)
         image = Image.open(file_path)
         # Convert palette / RGBA modes to RGB for better Tesseract compatibility
         if image.mode in ("P", "RGBA", "LA"):
             image = image.convert("RGB")
 
         text = pytesseract.image_to_string(image, lang=lang)
-        return text.strip()
+        cleaned = text.strip()
+        logger.info("OCR completed for %s (%d chars)", file_path, len(cleaned))
+        return cleaned
     except Exception as exc:
         logger.error("OCR extraction failed for %s: %s", file_path, exc)
         return ""

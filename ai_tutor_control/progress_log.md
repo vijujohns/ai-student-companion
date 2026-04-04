@@ -131,3 +131,49 @@
   - Frontend unit: `169 passed`
   - Frontend Playwright: `15 passed`
 - Step 11 closed; Step 12 is now the next pending step.
+
+## Step 12
+- Date: 2026-04-04
+- Status: Completed after user approval.
+- Implemented Step 12C smart reindexing as a compatibility-first indexing upgrade without redesigning the ingestion stack.
+- Added chunk classification and metadata enrichment in `v3/backend/app/modules/ingestion.py` so indexed chunks now carry `chapter`, `topic`, `type`, `modality`, and a logical `index_name`.
+- Extended `v3/backend/app/modules/faiss_store.py` to persist logical multi-index buckets (`concept_index`, `summary_index`, `qa_index`, `formula_index`, `image_index`) while keeping the existing FAISS contract backward compatible.
+- Updated `v3/backend/app/modules/retrieval_orchestrator.py` so task-aware retrieval now prefers the matching logical index (for example math -> `formula_index`, lesson/explanation -> `concept_index`, quiz -> `qa_index`, OCR/image -> `image_index`).
+- Extended `v3/backend/app/modules/kb_sync.py` and the existing admin reindex endpoints to return reindex progress stats for full or selective rebuilds while preserving the current `/admin/reindex` response status contract.
+- Added focused coverage in `v3/test_suite/backend/test_smart_reindexing.py`.
+- Verification evidence collected after implementation:
+  - Targeted smart-indexing/regression suites: `111 passed, 1 skipped, 3 warnings`
+  - Backend full suite: `548 passed, 1 skipped, 3 warnings`
+  - Frontend unit: `169 passed`
+  - Frontend Playwright: `15 passed`
+- Example grounding check after the change showed task alignment working as intended:
+  - Math query top result -> `formula_index` (`Formula: speed = distance / time`)
+  - Lesson/explanation query top result -> `concept_index` (`Concept: Photosynthesis is the process by which plants make food using sunlight.`)
+- Waiting for user approval before closing Step 12 or moving to later steps.
+- Added Step 12B grounding fixes in `v3/backend/app/modules/rag.py` and `v3/backend/app/modules/model_manager.py`:
+  - retrieved chunks are now logged with metadata for debugging
+  - context is reduced to a bounded top 3–5 chunks with deduplication
+  - context is formatted with explicit `[CONTEXT START]` / `[CONTEXT END]` chunk boundaries
+  - the strict prompt now requires the exact fallback phrase `I don't have enough information in the provided material.`
+  - the old general-knowledge fallback path was removed for RAG answers
+  - a no-context / ungrounded-answer fail-safe now blocks unsupported answers
+- Added targeted grounding regression coverage in `v3/test_suite/backend/test_rag.py`.
+- Validation evidence after the grounding fix:
+  - Targeted grounding/retrieval suites: `42 passed, 3 warnings`
+  - Backend full suite: `551 passed, 1 skipped, 3 warnings`
+  - Frontend unit: `169 passed`
+  - Frontend Playwright: `15 passed`
+- Manual validation check for the requested physics-style query `What is refraction?`:
+  - Before fix: the system returned an external unsupported explanation despite no matching indexed material.
+  - After fix: the same query returned `I don't have enough information in the provided material.` when no relevant context was retrieved.
+- Added Step 12D feature correction + stabilization without changing the already-fixed RAG core:
+  - `v3/backend/app/modules/quiz.py` now preserves `correct_answer` and `explanation`, normalizes option/answer labels more reliably, and extracts structured quiz JSON even when wrapped in fenced text.
+  - `v3/backend/app/modules/ocr.py` now exposes safe, patchable OCR fallbacks for missing dependencies and logs clear progress markers (`Image extracted for OCR`, `OCR completed ...`) during extraction.
+  - `v3/backend/app/modules/model_manager.py` now returns safe fallback text when local/cloud generation raises runtime errors instead of bubbling crashes back to the caller.
+- Added focused regression coverage in `v3/test_suite/backend/test_feature_stabilization.py` for quiz answer retention, structured quiz parsing, OCR progress logging, and model-failure fallback behavior.
+- TDD validation evidence for Step 12D:
+  - Initial focused repro before the fix: `4 failed`
+  - Focused stabilization suite after the fix: `4 passed, 3 warnings`
+  - Backend full suite after Step 12D: `555 passed, 1 skipped, 3 warnings`
+  - Frontend unit after Step 12D: `169 passed`
+  - Frontend Playwright after Step 12D: `15 passed`

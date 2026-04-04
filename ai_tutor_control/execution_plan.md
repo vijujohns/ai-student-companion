@@ -54,9 +54,9 @@ approval_required: false
 notes: SymPy-backed math handling and IndicTrans2-compatible translation fallback added behind the existing ask/streaming paths; full regression suite verified green on 2026-04-04.
 
 Step 12: End-to-End Validation 
-status : PENDING 
+status : COMPLETED 
 approval_required: true
-notes: Next active step after Step 11 completion.
+notes: User approval received on 2026-04-04; Step 12B grounding fixes, Step 12C smart reindexing, and Step 12D feature correction/stabilization are now closed with full regression verification (`555 passed, 1 skipped` backend; `169 passed` frontend unit; `15 passed` Playwright).
 
 Step 13: RAG Optimization 
 status : PENDING 

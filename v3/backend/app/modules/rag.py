@@ -8,8 +8,9 @@ RAG (Retrieval-Augmented Generation) orchestrator
 
 import hashlib
 import os
+import re
 import time
-from typing import List
+from typing import Any, List
 
 from .cache import get_cache, set_cache
 from .db import get_connection
@@ -23,11 +24,28 @@ from ..core.debug_logger import dlog
 
 
 _CONTENT_UNSET = object()
+_GROUNDING_FALLBACK = "I don't have enough information in the provided material."
+_GROUNDING_STOPWORDS = {
+    "the", "a", "an", "is", "are", "was", "were", "what", "which", "who", "when", "where",
+    "why", "how", "this", "that", "these", "those", "and", "or", "but", "for", "with", "from",
+    "into", "about", "your", "their", "them", "then", "than", "have", "has", "had", "does", "did",
+    "not", "can", "could", "would", "should", "using", "used", "only", "based", "provided", "material",
+    "study", "chunk", "answer",
+}
+_TOKEN_RE = re.compile(r"[A-Za-z0-9']+")
 
 
 # -------------------------
 # Utility Functions
 # -------------------------
+def _grounding_terms(text: str) -> set[str]:
+    return {
+        token
+        for token in _TOKEN_RE.findall(str(text or "").lower())
+        if len(token) > 2 and token not in _GROUNDING_STOPWORDS
+    }
+
+
 def rank_chunks(query: str, chunks: List[str]) -> List[str]:
     query_words = set(query.lower().split())
     scored = [(len(query_words.intersection(set(c.lower().split()))), c) for c in chunks]
@@ -36,7 +54,12 @@ def rank_chunks(query: str, chunks: List[str]) -> List[str]:
 
 
 def is_context_relevant(query: str, context: str) -> bool:
-    return len(set(query.lower().split()).intersection(set(context.lower().split()))) > 2
+    query_terms = _grounding_terms(query)
+    context_terms = _grounding_terms(context)
+    if not query_terms or not context_terms:
+        return False
+    overlap = query_terms.intersection(context_terms)
+    return bool(overlap)
 
 
 def clean_output(text: str) -> str:
@@ -56,6 +79,116 @@ def clean_output(text: str) -> str:
     words = text.split()
     cleaned_words = [w for i, w in enumerate(words) if i == 0 or w != words[i - 1]]
     return " ".join(cleaned_words).strip()
+
+
+def _normalize_retrieval_item(item: Any) -> dict:
+    if isinstance(item, dict):
+        return {
+            "text": str(item.get("text") or "").strip(),
+            "source": item.get("source"),
+            "metadata": dict(item.get("metadata") or {}),
+            "score": float(item.get("score", 0.0) or 0.0),
+            "index_name": str(item.get("index_name") or (item.get("metadata") or {}).get("index_name") or "general_index"),
+        }
+    return {
+        "text": str(item or "").strip(),
+        "source": None,
+        "metadata": {},
+        "score": 0.0,
+        "index_name": "general_index",
+    }
+
+
+def _dedupe_context_items(items: list[dict], limit: int) -> list[dict]:
+    deduped: list[dict] = []
+    seen: set[str] = set()
+    for item in items:
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        key = re.sub(r"\s+", " ", text).strip().lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+        if len(deduped) >= limit:
+            break
+    return deduped
+
+
+def _log_retrieved_chunks(query: str, items: list[dict]) -> None:
+    for idx, item in enumerate(items, start=1):
+        metadata = item.get("metadata") or {}
+        dlog(
+            "RAG",
+            "Retrieved chunk",
+            query=query[:100],
+            rank=idx,
+            chapter=metadata.get("chapter") or "",
+            topic=metadata.get("topic") or "",
+            chunk_type=metadata.get("type") or "",
+            index_name=item.get("index_name") or "general_index",
+            score=f"{float(item.get('score', 0.0)):.3f}",
+            preview=str(item.get("text") or "")[:180],
+        )
+
+
+def _format_context_block(items: list[dict], summary_context: str = "") -> str:
+    parts = ["[CONTEXT START]"]
+    if summary_context:
+        parts.append(f"Document Summary:\n{summary_context.strip()}")
+
+    for idx, item in enumerate(items, start=1):
+        metadata = item.get("metadata") or {}
+        labels = []
+        if metadata.get("chapter"):
+            labels.append(f"chapter={metadata['chapter']}")
+        if metadata.get("topic"):
+            labels.append(f"topic={metadata['topic']}")
+        if metadata.get("type"):
+            labels.append(f"type={metadata['type']}")
+        header = f"Chunk {idx}"
+        if labels:
+            header += f" ({', '.join(labels)})"
+        parts.append(f"{header}:\n{str(item.get('text') or '').strip()}")
+
+    parts.append("[CONTEXT END]")
+    return "\n\n".join(part for part in parts if part).strip()
+
+
+def _is_no_info_response(answer: str) -> bool:
+    lowered = str(answer or "").strip().lower()
+    if not lowered:
+        return True
+    phrases = (
+        "i could not find this in the provided study material",
+        "i don't have enough information in the provided material",
+        "i do not have enough information in the provided material",
+        "not enough information in the provided material",
+        "not found in the context",
+        "not in the provided",
+    )
+    return any(phrase in lowered for phrase in phrases)
+
+
+def _is_answer_grounded(answer: str, context: str, query: str) -> bool:
+    cleaned_answer = clean_output(answer)
+    if not cleaned_answer:
+        return False
+    if _is_no_info_response(cleaned_answer):
+        return True
+    if not str(context or "").strip():
+        return True
+
+    answer_terms = _grounding_terms(cleaned_answer)
+    context_terms = _grounding_terms(context)
+    query_terms = _grounding_terms(query)
+    if not answer_terms or not context_terms:
+        return False
+
+    overlap = answer_terms.intersection(context_terms)
+    required = max(1, min(3, len(query_terms) or 1))
+    return len(overlap) >= required
 
 
 def _build_cache_key(
@@ -161,54 +294,53 @@ def generate_answer(
     last_question = history_data[-1]["question"] if history_data else ""
     enhanced_query = f"{query}. Context: {last_question}" if last_question and len(query) < 80 else query
 
-    top_k = get_rag_top_k(default=4)
+    top_k = min(max(3, get_rag_top_k(default=4)), 5)
     if session_content_path and _looks_like_summary_request(query):
-        top_k = max(top_k, 8)
+        top_k = min(max(top_k, 4), 5)
 
-    context_list = search(
+    retrieval_results = search(
         enhanced_query,
         filter_path=session_content_path,
         top_k=top_k,
         search_k=max(8, top_k * 2),
         task=normalized_task,
+        return_details=True,
     )
-    context_list = rank_chunks(enhanced_query, context_list)[:top_k]
+    context_items = _dedupe_context_items(
+        [_normalize_retrieval_item(item) for item in (retrieval_results or [])],
+        limit=top_k,
+    )
+    _log_retrieved_chunks(query, context_items)
 
-    raw_context = "\n".join(context_list).strip()
-    if summary_context:
-        raw_context = f"Document summary:\n{summary_context}\n\nRelevant excerpts:\n{raw_context}".strip()
-
-    if session_content_path:
-        context = raw_context
-    else:
-        context = raw_context if is_context_relevant(query, raw_context) else ""
+    raw_context = "\n".join(item.get("text", "") for item in context_items).strip()
+    has_relevant_context = session_content_path or is_context_relevant(query, raw_context)
+    context = _format_context_block(context_items, summary_context=summary_context) if has_relevant_context and (raw_context or summary_context) else ""
 
     history_text = "".join(
         [f"user: {h['question']}\nassistant: {h['answer']}\n" for h in history_data]
     )
 
-    answer = generate_response(
-        context=context,
-        query=query,
-        history=history_text,
-        model_name=model_name,
-        task=normalized_task,
-    )
-
     fallback_used = False
-    if any(x in answer.lower() for x in ["could not find", "not found in the context", "not in the provided"]):
+    if not context.strip():
         fallback_used = True
-        fallback_prompt = f"""
-You are a helpful AI tutor.
-Answer the question clearly using your general knowledge.
-Keep it simple and student-friendly.
-Question: {query}
-Answer:
-"""
-        answer = generate_response("", fallback_prompt, "", model_name)
-        answer = "This answer is based on my general knowledge, not from your study material.\n\n" + answer
+        answer = _GROUNDING_FALLBACK
+    else:
+        answer = generate_response(
+            context=context,
+            query=query,
+            history=history_text,
+            model_name=model_name,
+            task=normalized_task,
+        )
+
+    if _is_no_info_response(answer):
+        fallback_used = True
+        answer = _GROUNDING_FALLBACK
 
     answer = clean_output(answer)
+    if not _is_answer_grounded(answer, context, query):
+        fallback_used = True
+        answer = _GROUNDING_FALLBACK
     set_cache(key, {"answer": answer})
     save_chat(
         user_id,
@@ -307,48 +439,47 @@ def generate_answer_stream(
     last_question = history_data[-1]["question"] if history_data else ""
     enhanced_query = f"{query}. Context: {last_question}" if last_question and len(query) < 80 else query
 
-    top_k = get_rag_top_k(default=4)
+    top_k = min(max(3, get_rag_top_k(default=4)), 5)
     if session_content_path and _looks_like_summary_request(query):
-        top_k = max(top_k, 8)
+        top_k = min(max(top_k, 4), 5)
 
-    context_list = search(
+    retrieval_results = search(
         enhanced_query,
         filter_path=session_content_path,
         top_k=top_k,
         search_k=max(8, top_k * 2),
         task=normalized_task,
+        return_details=True,
     )
-    context_list = rank_chunks(enhanced_query, context_list)[:top_k]
+    context_items = _dedupe_context_items(
+        [_normalize_retrieval_item(item) for item in (retrieval_results or [])],
+        limit=top_k,
+    )
+    _log_retrieved_chunks(query, context_items)
 
-    context = "\n".join(context_list).strip()
-    if summary_context:
-        context = f"Document summary:\n{summary_context}\n\nRelevant excerpts:\n{context}".strip()
+    raw_context = "\n".join(item.get("text", "") for item in context_items).strip()
+    has_relevant_context = session_content_path or is_context_relevant(query, raw_context)
+    context = _format_context_block(context_items, summary_context=summary_context) if has_relevant_context and (raw_context or summary_context) else ""
 
     history_text = "".join(
         [f"user: {h['question']}\nassistant: {h['answer']}\n" for h in history_data]
     )
 
-    full_response = ""
-    for token in generate_response_stream(context, query, history_text, model_name, task=normalized_task):
-        yield token
-        full_response += token
-
-    if any(x in full_response.lower() for x in ["could not find", "not found in the context", "not in the provided"]):
-        fallback_prompt = f"""
-    You are a helpful AI tutor.
-    Answer the question clearly using your general knowledge.
-    Keep it simple and student-friendly.
-    Question: {query}
-    Answer:
-    """
-        _prefix = "This answer is based on my general knowledge, not from your study material.\n\n"
-        yield _prefix
-        full_response = _prefix
-        for token in generate_response_stream("", fallback_prompt, "", model_name):
-            full_response += token
+    if not context.strip():
+        full_response = _GROUNDING_FALLBACK
+        yield full_response
+    else:
+        full_response = ""
+        for token in generate_response_stream(context, query, history_text, model_name, task=normalized_task):
             yield token
+            full_response += token
 
-    full_response = clean_output(full_response)
+        if _is_no_info_response(full_response):
+            full_response = _GROUNDING_FALLBACK
+        else:
+            full_response = clean_output(full_response)
+            if not _is_answer_grounded(full_response, context, query):
+                full_response = _GROUNDING_FALLBACK
     set_cache(key, {"answer": full_response})
     save_chat(
         user_id,

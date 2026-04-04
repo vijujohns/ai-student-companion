@@ -51,13 +51,31 @@ def build_index_plan(task: str = "qa", filter_path: Optional[str] = None) -> lis
     return plans.get(normalized_task, plans["qa"])
 
 
+def build_logical_index_plan(task: str = "qa") -> list[str]:
+    normalized_task = str(task or "qa").strip().lower() or "qa"
+    plans = {
+        "qa": ["concept_index", "summary_index", "qa_index"],
+        "summary": ["summary_index", "concept_index", "qa_index"],
+        "lesson": ["concept_index", "summary_index", "qa_index"],
+        "quiz": ["qa_index", "concept_index", "summary_index"],
+        "flashcards": ["concept_index", "summary_index", "qa_index"],
+        "assessment": ["qa_index", "concept_index", "summary_index"],
+        "translation": ["concept_index", "summary_index", "general_index"],
+        "math": ["formula_index", "concept_index", "summary_index"],
+    }
+    return plans.get(normalized_task, plans["qa"])
+
+
 def _normalize_doc(doc: Any) -> dict[str, Any]:
     if isinstance(doc, dict):
+        metadata = dict(doc.get("metadata") or {})
         return {
             "text": str(doc.get("text") or ""),
             "source": doc.get("source"),
+            "index_name": doc.get("index_name") or metadata.get("index_name") or "general_index",
+            "metadata": metadata,
         }
-    return {"text": str(doc or ""), "source": None}
+    return {"text": str(doc or ""), "source": None, "index_name": "general_index", "metadata": {}}
 
 
 def _lexical_score(query: str, text: str, source: Optional[str]) -> tuple[float, list[str]]:
@@ -89,6 +107,7 @@ def hybrid_rank_results(
     source_types: Optional[Sequence[str]] = None,
 ) -> list[dict[str, Any]]:
     preferred_sources = set(source_types or build_index_plan(task, filter_path))
+    preferred_indexes = set(build_logical_index_plan(task))
     score_map: dict[int, dict[str, Any]] = {}
 
     def ensure_entry(doc_index: int) -> Optional[dict[str, Any]]:
@@ -109,6 +128,8 @@ def hybrid_rank_results(
             "text": text,
             "source": source,
             "source_type": infer_source_type(source),
+            "index_name": normalized.get("index_name", "general_index"),
+            "metadata": normalized.get("metadata") or {},
             "vector_score": 0.0,
             "lexical_score": 0.0,
             "rank_bonus": 0.0,
@@ -152,11 +173,20 @@ def hybrid_rank_results(
         else:
             source_bonus = -0.03
 
+        index_name = str(entry.get("index_name") or "general_index")
+        if index_name in preferred_indexes:
+            index_bonus = 0.14
+        elif index_name == "general_index":
+            index_bonus = 0.01
+        else:
+            index_bonus = -0.02
+
         entry["score"] = (
             (entry["lexical_score"] * 0.65)
             + (entry["vector_score"] * 0.35)
             + entry["rank_bonus"]
             + source_bonus
+            + index_bonus
         )
 
     ranked = sorted(

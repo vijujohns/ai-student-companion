@@ -2,12 +2,12 @@
 FAISS vector store
 """
 
-from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
 import os
 import pickle
 import json
+import threading
 
 from ..core.config_loader import get_rag_config
 from .retrieval_orchestrator import hybrid_rank_results
@@ -19,51 +19,156 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 INDEX_FILE = os.path.join(DATA_DIR, "faiss.index")
 DOC_FILE = os.path.join(DATA_DIR, "documents.pkl")
 META_FILE = os.path.join(DATA_DIR, "metadata.json")
+MULTI_INDEX_FILE = os.path.join(DATA_DIR, "logical_indexes.json")
+
+_DEFAULT_EMBEDDING_DIM = int(os.getenv("FAISS_EMBEDDING_DIM", "768"))
+_MODEL_LOCK = threading.RLock()
 
 
-def _load_embedding_model():
+def _candidate_embedding_models() -> list[str]:
     rag_cfg = get_rag_config()
     configured = str(rag_cfg.get("embedding_model") or "").strip()
-    candidates = []
+    candidates: list[str] = []
     for name in (configured, "BAAI/bge-base-en-v1.5", "all-MiniLM-L6-v2"):
         if name and name not in candidates:
             candidates.append(name)
-
-    last_error = None
-    for model_name in candidates:
-        try:
-            loaded_model = SentenceTransformer(model_name)
-            print(f"✅ Embedding model loaded: {model_name}")
-            return loaded_model, model_name
-        except Exception as exc:
-            last_error = exc
-            print(f"⚠️ Failed to load embedding model '{model_name}', trying fallback: {exc}")
-
-    raise RuntimeError("Unable to load any sentence-transformer embedding model") from last_error
+    return candidates
 
 
-# Model
-model, EMBEDDING_MODEL_NAME = _load_embedding_model()
-embedding_dim = model.get_sentence_embedding_dimension()
+class _LazyEmbeddingModel:
+    """Delay SentenceTransformer import/loading until first encode call."""
 
-# FAISS
+    def __init__(self):
+        self._model = None
+
+    def _ensure_loaded(self):
+        global EMBEDDING_MODEL_NAME, embedding_dim
+
+        if self._model is not None:
+            return self._model
+
+        with _MODEL_LOCK:
+            if self._model is not None:
+                return self._model
+
+            from sentence_transformers import SentenceTransformer
+
+            last_error = None
+            for model_name in _candidate_embedding_models():
+                try:
+                    loaded_model = SentenceTransformer(model_name)
+                    self._model = loaded_model
+                    EMBEDDING_MODEL_NAME = model_name
+                    embedding_dim = int(loaded_model.get_sentence_embedding_dimension())
+                    print(f"✅ Embedding model loaded: {model_name}")
+                    return loaded_model
+                except Exception as exc:
+                    last_error = exc
+                    print(f"⚠️ Failed to load embedding model '{model_name}', trying fallback: {exc}")
+
+            raise RuntimeError("Unable to load any sentence-transformer embedding model") from last_error
+
+    def encode(self, *args, **kwargs):
+        return self._ensure_loaded().encode(*args, **kwargs)
+
+    def get_sentence_embedding_dimension(self):
+        if self._model is not None:
+            return self._model.get_sentence_embedding_dimension()
+        return embedding_dim
+
+    def __getattr__(self, name):
+        return getattr(self._ensure_loaded(), name)
+
+
+def _as_float32_array(values):
+    return np.array(values, dtype="float32")
+
+
+def _ensure_model_ready():
+    model._ensure_loaded()
+    _ensure_index_matches_model()
+
+
+def _ensure_index_matches_model():
+    """Keep the in-memory FAISS index aligned with the loaded embedding dimension."""
+    global index, embedding_dim
+
+    detected_dim = int(model.get_sentence_embedding_dimension())
+    embedding_dim = detected_dim
+    if getattr(index, "d", detected_dim) == detected_dim:
+        return
+
+    fresh_index = faiss.IndexFlatL2(detected_dim)
+    texts = []
+    for doc in documents:
+        if isinstance(doc, dict):
+            texts.append(doc.get("text", "") or "")
+        else:
+            texts.append(str(doc) or "")
+
+    if texts:
+        vectors = model.encode(texts)
+        fresh_index.add(_as_float32_array(vectors))
+
+    index = fresh_index
+
+
+LOGICAL_INDEX_NAMES = (
+    "concept_index",
+    "summary_index",
+    "qa_index",
+    "formula_index",
+    "image_index",
+    "general_index",
+)
+
+
+def _empty_logical_indexes() -> dict[str, list[int]]:
+    return {name: [] for name in LOGICAL_INDEX_NAMES}
+
+
+def _rebuild_logical_indexes() -> None:
+    global logical_indexes
+    logical_indexes = _empty_logical_indexes()
+    for doc_index, doc in enumerate(documents):
+        if isinstance(doc, dict):
+            index_name = doc.get("index_name") or (doc.get("metadata") or {}).get("index_name") or "general_index"
+        else:
+            index_name = "general_index"
+        logical_indexes.setdefault(str(index_name), []).append(doc_index)
+
+
+# Model + FAISS store
+model = _LazyEmbeddingModel()
+EMBEDDING_MODEL_NAME = ""
+embedding_dim = _DEFAULT_EMBEDDING_DIM
 index = faiss.IndexFlatL2(embedding_dim)
-documents = []   # list of dicts: {text, source}
+documents = []   # list of dicts: {text, source, metadata, index_name}
+logical_indexes = _empty_logical_indexes()
 
 
-def add_doc(text, source):
+def add_doc(text, source, metadata=None, index_name=None):
+    _ensure_model_ready()
     vec = model.encode([text])
-    index.add(np.array(vec))
+    index.add(_as_float32_array(vec))
+    normalized_metadata = dict(metadata or {})
+    logical_name = str(index_name or normalized_metadata.get("index_name") or "general_index").strip() or "general_index"
+    normalized_metadata.setdefault("index_name", logical_name)
     documents.append({
         "text": text,
-        "source": source
+        "source": source,
+        "metadata": normalized_metadata,
+        "index_name": logical_name,
     })
+    logical_indexes.setdefault(logical_name, []).append(len(documents) - 1)
 
 
 def _rebuild_index_from_documents():
     """Rebuild FAISS index from in-memory documents list."""
     global index
+    _ensure_model_ready()
     index = faiss.IndexFlatL2(embedding_dim)
+    _rebuild_logical_indexes()
     if not documents:
         return
 
@@ -77,7 +182,7 @@ def _rebuild_index_from_documents():
 
     if texts:
         vectors = model.encode(texts)
-        index.add(np.array(vectors))
+        index.add(_as_float32_array(vectors))
 
 
 def _remove_docs_for_source(source_path: str):
@@ -96,8 +201,9 @@ def _remove_docs_for_source(source_path: str):
 
 def _reset_store():
     """Clear all in-memory vectors and documents for a full rebuild."""
-    global documents
+    global documents, logical_indexes
     documents = []
+    logical_indexes = _empty_logical_indexes()
     _rebuild_index_from_documents()
 
 
@@ -113,9 +219,10 @@ def search(
     if len(documents) == 0:
         return []
 
+    _ensure_model_ready()
     q = model.encode([query])
     limit = min(len(documents), max(search_k, top_k, 1))
-    D, I = index.search(np.array(q), limit)
+    D, I = index.search(_as_float32_array(q), limit)
 
     ranked = hybrid_rank_results(
         query,
@@ -155,28 +262,38 @@ def save_index():
     with open(DOC_FILE, "wb") as f:
         pickle.dump(documents, f)
 
+    with open(MULTI_INDEX_FILE, "w") as f:
+        json.dump(logical_indexes, f, indent=2)
+
     print("✅ FAISS index saved")
 
 
 def load_index():
-    global index, documents
+    global index, documents, embedding_dim, logical_indexes
 
     if os.path.exists(INDEX_FILE) and os.path.exists(DOC_FILE):
         index = faiss.read_index(INDEX_FILE)
+        embedding_dim = int(getattr(index, "d", embedding_dim) or embedding_dim)
 
         with open(DOC_FILE, "rb") as f:
             documents = pickle.load(f)
 
+        if os.path.exists(MULTI_INDEX_FILE):
+            with open(MULTI_INDEX_FILE, "r") as f:
+                logical_indexes = json.load(f)
+        _rebuild_logical_indexes()
+
         print("✅ FAISS index loaded from disk")
     else:
+        logical_indexes = _empty_logical_indexes()
         print("⚠️ No existing index found")
 
 
 # Backward-compat alias retained for older tests/callers that still patch
 # app.modules.faiss_store.load_knowledge_base after the orchestration moved to kb_sync.
-def load_knowledge_base(force_reindex: bool = False):
+def load_knowledge_base(force_reindex: bool = False, target_path: str | None = None):
     from .kb_sync import load_knowledge_base as _load_knowledge_base
 
-    return _load_knowledge_base(force_reindex=force_reindex)
+    return _load_knowledge_base(force_reindex=force_reindex, target_path=target_path)
 
 

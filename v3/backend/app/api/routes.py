@@ -275,18 +275,29 @@ def ask(request: AskRequest, user=Depends(get_current_user)):
 
 
 @router.post("/admin/reindex")
-def reindex(user=Depends(require_role("admin"))):
+def reindex(payload: Optional[dict] = Body(default=None), user=Depends(require_role("admin"))):
     from ..modules.kb_sync import load_knowledge_base
 
-    load_knowledge_base(force_reindex=True)
-    return envelope({"status": "Reindex completed"}, message_id="MSG-1000")
+    payload = payload or {}
+    target_path = payload.get("path") if isinstance(payload, dict) else None
+    result = load_knowledge_base(force_reindex=True, target_path=target_path)
+    response = {"status": "Reindex completed"}
+    if isinstance(result, dict) and result:
+        response["reindex"] = result
+    return envelope(response, message_id="MSG-1000")
 
 
 @router.post("/admin/reindex-incremental")
-def incremental_reindex(user=Depends(require_role("admin"))):
+def incremental_reindex(payload: Optional[dict] = Body(default=None), user=Depends(require_role("admin"))):
     from ..modules.kb_sync import load_knowledge_base
-    load_knowledge_base(force_reindex=False)
-    return envelope({"status": "Incremental reindex completed"}, message_id="MSG-1000")
+
+    payload = payload or {}
+    target_path = payload.get("path") if isinstance(payload, dict) else None
+    result = load_knowledge_base(force_reindex=False, target_path=target_path)
+    response = {"status": "Incremental reindex completed"}
+    if isinstance(result, dict) and result:
+        response["reindex"] = result
+    return envelope(response, message_id="MSG-1000")
 
 
 @router.get("/history")

@@ -23,3 +23,6 @@
 - Consider exposing generator-task selection more explicitly from the frontend UI instead of relying mainly on chat phrasing and optional task hints.
 - Consider upgrading the new OCR-first image pipeline to optional multimodal caption/diagram understanding later if an approved local or hosted vision model is introduced.
 - Consider packaging approved local IndicTrans2 model assets and enabling them through deployment configuration so the new translation path can stay fully offline without first-use downloads.
+- Consider promoting the new logical smart-index buckets into physically sharded FAISS files only if corpus size or reindex time grows enough to justify the added operational complexity.
+- Consider moving the new grounding thresholds and fail-safe strictness into config so citation/overlap sensitivity can be tuned per task without code changes.
+- Consider adding schema-level output validation at the generator boundary (for example quiz answer/explanation enforcement) and a lightweight non-LLM OCR summary fallback to reduce reliance on model formatting during feature flows.

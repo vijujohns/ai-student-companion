@@ -49,12 +49,12 @@ class TestHybridRetrieval:
         with (
             patch("app.modules.rag.get_connection", return_value=fake_conn),
             patch("app.modules.rag.get_cache", return_value=None),
-            patch("app.modules.rag.search", return_value=["retrieved chunk"]) as mock_search,
-            patch("app.modules.rag.generate_response", return_value="Generated answer"),
+            patch("app.modules.rag.search", return_value=["Plants grow using sunlight in the retrieved chunk"]) as mock_search,
+            patch("app.modules.rag.generate_response", return_value="Plants grow using sunlight in the retrieved chunk"),
             patch("app.modules.rag.set_cache"),
             patch("app.modules.rag.save_chat"),
         ):
             result = rag.generate_answer("Create a quiz on plants", "user1", "session1", task="quiz")
 
-        assert result == "Generated answer"
+        assert result == "Plants grow using sunlight in the retrieved chunk"
         assert mock_search.call_args.kwargs["task"] == "quiz"
