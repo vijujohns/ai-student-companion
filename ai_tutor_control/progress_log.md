@@ -11,6 +11,13 @@
 - Approval received from user; Step 1 closed without starting Step 2.
 
 ## Step 2
+- Date: 2026-04-04
+- Status: Completed after user approval.
+- Confirmed Step 2 was the active step and kept it `IN PROGRESS` until approval.
+- Compared the current system against the required upgrade areas: task router, retrieval upgrade, generators, image pipeline, and math + translation.
+- Classified capabilities into `Supported`, `Partial`, and `Missing` based on verified routes/modules and current runtime behavior.
+- Stored the detailed analysis in `ai_tutor_control/architecture.md`.
+- Approval received from user; Step 2 closed without starting Step 3.
 
 ## Step 3
 

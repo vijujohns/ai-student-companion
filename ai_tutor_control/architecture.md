@@ -136,3 +136,44 @@ Configured in `v3/backend/app/modules/model_manager.py` and `v3/configs/settings
 
 ## Step 1 Conclusion
 Codebase discovery is complete and documented here. Approval is required before Step 1 can be marked completed in the execution plan.
+
+## Step 2 - Gap Analysis
+
+Date: 2026-04-04
+Status: Documented and awaiting approval.
+
+### Comparison Against Required Features
+
+| Feature Area | Required Capability | Current Status | Evidence | Gap Summary |
+|---|---|---|---|---|
+| Auth + session control | Secure login, role checks, session ownership, WS auth | **Supported** | `api/routes.py`, `modules/auth.py`, `modules/dependencies.py`, `modules/ws_auth.py` | Baseline is already in place and production-shaped. |
+| Chat + streaming tutor | HTTP/WS tutoring with persistence and quotas | **Supported** | `/ask`, `/ws/ask`, `rag.py`, `history.py`, `policy.py` | Core tutor flow exists and is usable now. |
+| Task router | Explicit request-to-task dispatching across domains | **Partial** | `model_manager.py` has task-based model selection; `ServiceRegistry` exists in `adapters/default_services.py` | No dedicated intent router/orchestrator currently decides whether a request should go to Q&A, lesson, quiz, translation, or future math handling. |
+| Retrieval upgrade | Strong retrieval quality, extensibility, and source grounding | **Partial** | `faiss_store.py`, `rag.py`, `kb_sync.py`, `ingestion.py` | FAISS retrieval, filtering, summaries, and chunk ranking exist, but there is no hybrid lexical+semantic retrieval, reranker, or citation-confidence layer. |
+| Generators | Lesson, quiz, flashcard, and assessment generation | **Supported** | `lesson_plan.py`, `quiz.py`, `flashcards.py`, `assessment.py`, `artifacts.py` | Generator coverage is broad; remaining gap is orchestration consistency rather than feature absence. |
+| Image pipeline | File upload, OCR ingestion, and image-aware learning flow | **Partial** | `ocr.py`, `ingestion.py::ingest_image`, `/ocr/status`, `/upload/file` | OCR-based ingestion exists, but true multimodal reasoning/diagram interpretation is not present yet. |
+| Translation | Language listing and text translation support | **Supported** | `translation.py`, `/languages`, `/translate`, `/preferences` | Baseline multilingual utility is present. |
+| Math handling | Dedicated math-solving / validation path | **Missing** | No dedicated math module or symbolic solver found in backend search | Mathematics currently depends on the generic LLM path rather than a domain-specific solver or verifier. |
+| Subscription/commercial controls | Catalog, quoting, activation, entitlements | **Partial** | `subscriptions.py`, `/subscription/catalog`, `/subscription/quote`, `/subscription/activate` | Commercial groundwork exists, but the lifecycle is still app-internal and not a full billing platform integration. |
+| Progress + collaboration | Analytics, mastery, teacher/parent access, notes | **Supported** | `analytics.py`, relationship/collaboration routes, role-based panels | These product areas are already materially implemented. |
+
+### Classification Summary
+
+#### Supported
+- Authentication and authorization
+- Session management and streaming chat
+- Lesson, quiz, flashcard, and assessment generators
+- Translation baseline
+- Progress analytics and collaboration roles
+
+#### Partial
+- Task routing/orchestration
+- Retrieval quality upgrade
+- Image pipeline beyond OCR
+- Subscription/commercial lifecycle depth
+
+#### Missing
+- Dedicated math engine / solver / validator path
+
+### Step 2 Conclusion
+The system already covers most core tutoring workflows. The biggest remaining gaps relative to the required upgrade path are **task routing**, **retrieval quality improvements**, **deeper image understanding**, and **specialized math handling**. Approval is required before Step 2 can be marked completed or before moving to Step 3.
