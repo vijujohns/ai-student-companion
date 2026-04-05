@@ -110,6 +110,7 @@ test("chat sends and receives streamed reply", async ({ page }) => {
   await page.getByRole("button", { name: "Continue" }).click();
 
   await expect(page.getByRole("button", { name: /New Chat/i }).first()).toBeVisible();
+  await page.getByRole("button", { name: /Proceed in Explorer Mode/i }).click();
 
   await page.getByPlaceholder("Ask a question, request a summary, or work through a problem...").fill("What is AI?");
   await page.getByRole("button", { name: "Send" }).click();

@@ -2,6 +2,7 @@
 Main FastAPI entry point
 """
 
+import asyncio
 import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
@@ -17,7 +18,7 @@ from .api.routes import router
 from .api.websocket import websocket_router
 
 from .modules.faiss_store import load_index
-from .modules.kb_sync import load_knowledge_base
+from .modules.kb_sync import load_knowledge_base, start_reindex_job
 from .modules.file_management import recover_indexing_jobs
 from .modules.db import init_db
 from .core.debug_logger import dlog, is_debug
@@ -26,8 +27,6 @@ from .modules.messages import get_message
 
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
-
-import threading
 
 load_dotenv()
 
@@ -50,9 +49,70 @@ def _route_domain(path: str) -> str:
     return "misc"
 
 
+def _resolve_startup_reindex_mode() -> str:
+    """Return the backend startup reindex mode: skip by default, or incremental/full when explicitly requested."""
+    raw_mode = str(os.getenv("KB_REINDEX_MODE", "skip") or "skip").strip().lower()
+    normalized = {
+        "": "skip",
+        "false": "skip",
+        "0": "skip",
+        "off": "skip",
+        "none": "skip",
+        "disabled": "skip",
+        "skip": "skip",
+        "true": "incremental",
+        "1": "incremental",
+        "yes": "incremental",
+        "on": "incremental",
+        "enabled": "incremental",
+        "auto": "incremental",
+        "incremental": "incremental",
+        "changed": "incremental",
+        "missing": "incremental",
+        "full": "full",
+        "rebuild": "full",
+        "fresh": "full",
+    }.get(raw_mode, "skip")
+
+    legacy_skip = str(os.getenv("SKIP_KB_REINDEX", "")).strip().lower() in {"1", "true", "yes", "on"}
+    if legacy_skip:
+        return "skip"
+    return normalized
+
+
+def _schedule_startup_reindex(startup_reindex_mode: str) -> None:
+    """Defer the startup reindex job until the app has finished booting."""
+    if startup_reindex_mode == "skip":
+        print("⏭  KB startup indexing is disabled by default. Use --reindex=true, --reindex=incremental, or --reindex=full to run it.")
+        return
+
+    async def _launch() -> None:
+        await asyncio.sleep(0.25)
+        if startup_reindex_mode == "full":
+            print("♻️  Starting full KB re-index in background after startup completes (fresh rebuild of all files)")
+        else:
+            print("🔎 Starting incremental KB sync in background after startup completes (new/changed/unindexed files only)")
+        start_reindex_job(
+            force_reindex=startup_reindex_mode == "full",
+            requested_type=startup_reindex_mode,
+        )
+
+    try:
+        asyncio.get_running_loop().create_task(_launch())
+    except RuntimeError:
+        if startup_reindex_mode == "full":
+            print("♻️  Starting full KB re-index in background (fresh rebuild of all files)")
+        else:
+            print("🔎 Starting incremental KB sync in background (new/changed/unindexed files only)")
+        start_reindex_job(
+            force_reindex=startup_reindex_mode == "full",
+            requested_type=startup_reindex_mode,
+        )
+
+
 # ── Request / Response logging middleware ─────────────────────────────────────
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    """Logs every HTTP request → response when DEBUG_LOGGING is enabled."""
+    """Logs every HTTP request -> response when DEBUG_LOGGING is enabled."""
 
     async def dispatch(self, request: Request, call_next):
         if not is_debug():
@@ -65,7 +125,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         qp = dict(request.query_params)
         client = request.client.host if request.client else "unknown"
 
-        dlog("API", f"→ {method} {path}",
+        dlog("API", f"-> {method} {path}",
              domain=domain,
              client=client,
              query_params=qp if qp else None)
@@ -73,14 +133,14 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         try:
             response = await call_next(request)
             duration_ms = (time.perf_counter() - start) * 1000
-            dlog("API", f"← {method} {path} {response.status_code}",
+            dlog("API", f"<- {method} {path} {response.status_code}",
                  domain=domain,
                  duration_ms=f"{duration_ms:.1f}ms",
                  client=client)
             return response
         except Exception as exc:
             duration_ms = (time.perf_counter() - start) * 1000
-            dlog("API", f"← {method} {path} EXCEPTION",
+            dlog("API", f"<- {method} {path} EXCEPTION",
                  domain=domain,
                  error=str(exc),
                  duration_ms=f"{duration_ms:.1f}ms")
@@ -100,10 +160,7 @@ async def lifespan(app: FastAPI):
     dlog("STARTUP", "FAISS index loaded")
 
     print("🚀 Checking for KB updates...")
-    if not os.getenv("SKIP_KB_REINDEX"):
-        threading.Thread(target=load_knowledge_base, daemon=True).start()
-    else:
-        print("⏭  KB re-indexing skipped (SKIP_KB_REINDEX set)")
+    startup_reindex_mode = _resolve_startup_reindex_mode()
 
     print("🚀 Initializing DB...")
     init_db()
@@ -111,6 +168,8 @@ async def lifespan(app: FastAPI):
 
     recovery = recover_indexing_jobs()
     dlog("STARTUP", "Indexing jobs recovered", recovered=recovery["recovered"], failed=recovery["failed"])
+
+    _schedule_startup_reindex(startup_reindex_mode)
 
     yield
 

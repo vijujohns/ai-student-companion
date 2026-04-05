@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { FiMic, FiMicOff } from "react-icons/fi";
 
-const VoiceControl = ({ onResult }) => {
+const VoiceControl = ({ onResult, compact = false }) => {
   const [listening, setListening] = useState(false);
 
   const startListening = () => {
@@ -28,17 +28,23 @@ const VoiceControl = ({ onResult }) => {
 
   const SpeechRecognition =
     window.SpeechRecognition || window.webkitSpeechRecognition;
+  const tooltip = !SpeechRecognition
+    ? "Voice input not supported"
+    : listening
+      ? "Listening for voice input"
+      : "Voice input";
 
   return (
     <button
       type="button"
-      className="icon-button"
+      className={`icon-button voice-control ${compact ? "voice-control--compact" : ""}`.trim()}
       onClick={startListening}
       disabled={!SpeechRecognition}
-      title={SpeechRecognition ? "Voice input" : "Voice input not supported"}
+      title={tooltip}
+      aria-label={tooltip}
     >
       {listening ? <FiMicOff /> : <FiMic />}
-      <span>{listening ? "Listening" : "Voice"}</span>
+      {!compact && <span>{listening ? "Listening" : "Voice"}</span>}
     </button>
   );
 };

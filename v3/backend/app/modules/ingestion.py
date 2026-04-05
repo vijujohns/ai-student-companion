@@ -221,8 +221,31 @@ def get_summary(pdf_path):
     return ""
 
 
+def build_extractive_summary(text: str, max_sentences: int = 3, max_chars: int = 600) -> str:
+    """Build a lightweight summary without invoking the LLM."""
+    cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not cleaned:
+        return ""
+
+    sentences = [item.strip() for item in re.split(r"(?<=[.!?])\s+", cleaned) if item.strip()]
+    selected = []
+    total_chars = 0
+    for sentence in sentences:
+        if len(selected) >= max_sentences:
+            break
+        if total_chars and (total_chars + len(sentence) + 1) > max_chars:
+            break
+        selected.append(sentence)
+        total_chars += len(sentence) + 1
+
+    summary = " ".join(selected).strip() or cleaned[:max_chars].strip()
+    if len(summary) > max_chars:
+        summary = summary[:max_chars].rsplit(" ", 1)[0].strip() or summary[:max_chars].strip()
+    return summary
+
+
 # ----------------- PDF Summarization -----------------
-def summarize_pdf(text, pdf_path, model_name=None):
+def summarize_pdf(text, pdf_path, model_name=None, use_llm_summary=True):
     """
     Hierarchical summarization:
     1. Split into medium chunks
@@ -230,6 +253,12 @@ def summarize_pdf(text, pdf_path, model_name=None):
     3. Merge summaries
     4. Final summary
     """
+
+    if not use_llm_summary:
+        summary = build_extractive_summary(text)
+        save_summary(pdf_path, summary)
+        print("⚡ Using extractive summary for background reindex")
+        return summary
 
     from .model_manager import generate_response
 
@@ -291,11 +320,11 @@ SUMMARY:
 
 
 # ----------------- Full Ingestion -----------------
-def ingest_pdf(file_path, model_name=None):
+def ingest_pdf(file_path, model_name=None, use_llm_summary=True):
     """
     Full ingestion pipeline:
     1. Extract text
-    2. Summarize (parallel)
+    2. Summarize (parallel or extractive fallback)
     3. Chunk text
     4. Add to FAISS
     """
@@ -308,8 +337,8 @@ def ingest_pdf(file_path, model_name=None):
         print("No text found in PDF")
         return
 
-    # Step 1: generate summary using parallel summarization
-    summarize_pdf(text, file_path, model_name=model_name)
+    # Step 1: generate a summary, but keep background reindexing lightweight/stable.
+    summarize_pdf(text, file_path, model_name=model_name, use_llm_summary=use_llm_summary)
 
     # Step 2: chunk text for FAISS
     chunks = chunk_text(text)

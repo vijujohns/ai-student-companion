@@ -45,6 +45,7 @@ export default function AdminPanel({
   onAdminIncrementalReindex = null,
   adminRunning = false,
   adminMessage = "",
+  adminStatus = null,
   isActive = true,
 }) {
   const [availableModelProfiles, setAvailableModelProfiles] = useState(FALLBACK_MODEL_PROFILES);
@@ -59,6 +60,17 @@ export default function AdminPanel({
     () => (availableModelProfiles || []).find((item) => item?.key === selectedModelProfile) || null,
     [availableModelProfiles, selectedModelProfile],
   );
+  const adminStatusTone = adminRunning
+    ? "medium"
+    : adminStatus?.tone === "high"
+      ? "high"
+      : adminStatus?.tone === "medium"
+        ? "medium"
+        : "neutral";
+  const adminStatusLabel = adminRunning ? "Running" : adminStatus?.tone === "high" ? "Attention" : adminStatus ? "Updated" : "Ready";
+  const processedFiles = Array.isArray(adminStatus?.processedFiles) ? adminStatus.processedFiles.filter(Boolean) : [];
+  const adminErrors = Array.isArray(adminStatus?.errors) ? adminStatus.errors.filter(Boolean) : [];
+  const currentFile = String(adminStatus?.currentFile || "").trim();
 
   const loadAdminModelProfiles = useCallback(async () => {
     setModelProfileLoading(true);
@@ -244,7 +256,7 @@ export default function AdminPanel({
         <article className="profile-panel__card">
           <div className="profile-panel__card-top">
             <strong>Admin Actions</strong>
-            <span className={`progress-pill progress-pill--${adminRunning ? "medium" : "neutral"}`}>{adminRunning ? "Running" : "Ready"}</span>
+            <span className={`progress-pill progress-pill--${adminStatusTone}`}>{adminStatusLabel}</span>
           </div>
           <p className="sidebar-note">Run indexing or maintenance actions here without cluttering the role preview workspaces.</p>
           <div className="admin-center-panel__actions">
@@ -267,12 +279,52 @@ export default function AdminPanel({
               <span>Incremental Reindex</span>
             </button>
           </div>
-          {(adminRunning || adminMessage) ? (
-            <div className="profile-panel__summary-list">
+          {(adminRunning || adminMessage || adminStatus) ? (
+            <div className="profile-panel__summary-list admin-center-panel__status-list" role="status" aria-live="polite">
               <div>
                 <span>Status</span>
-                <strong>{adminRunning ? "Admin action running…" : adminMessage}</strong>
+                <strong>{adminStatus?.title || (adminRunning ? "Admin action running…" : adminMessage)}</strong>
               </div>
+              {adminStatus?.detail ? (
+                <div>
+                  <span>What it is doing</span>
+                  <strong>{adminStatus.detail}</strong>
+                </div>
+              ) : null}
+              {adminStatus?.stats ? (
+                <div>
+                  <span>Scan summary</span>
+                  <strong>
+                    {`Scanned ${adminStatus.stats.scanned ?? 0}${adminStatus.stats.total ? ` / ${adminStatus.stats.total}` : ""} · Reindexed ${adminStatus.stats.reindexed ?? 0} · Skipped ${adminStatus.stats.skipped ?? 0} · Removed ${adminStatus.stats.removed ?? 0}`}
+                  </strong>
+                </div>
+              ) : null}
+              {currentFile ? (
+                <div>
+                  <span>Current file</span>
+                  <strong>{currentFile}</strong>
+                </div>
+              ) : null}
+              {processedFiles.length ? (
+                <div className="admin-center-panel__status-block">
+                  <span>Recently processed</span>
+                  <ul className="admin-center-panel__status-files">
+                    {processedFiles.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {adminErrors.length ? (
+                <div className="admin-center-panel__status-block admin-center-panel__status-block--warning">
+                  <span>Warnings</span>
+                  <ul className="admin-center-panel__status-files">
+                    {adminErrors.map((item, index) => (
+                      <li key={`${item}-${index}`}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </article>

@@ -127,6 +127,9 @@ export function connectWebSocket(onMessage, onClose = () => {}, type = "ask") {
       if (msg.type === "error") {
         ws.__hasActivity = false;
         console.error(`❌ ${type} Server Error:`, msg.data);
+        if (msg.data) {
+          current.onMessage(`\n\n${msg.data}`);
+        }
         current.onMessage("[END]");
       }
     } catch {

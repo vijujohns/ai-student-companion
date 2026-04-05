@@ -46,6 +46,7 @@ export default function LessonPanel({
   autoRunToken = "",
   prefilledPlanData = null,
   currentContextLabel = null,
+  selectedContentId = null,
   hasLinkedContent = false,
   isContextViewerVisible = false,
   onOpenContext = null,
@@ -266,6 +267,7 @@ export default function LessonPanel({
           session_id: sid,
           chapter: selectedChapter,
           lesson_context: lessonContext.trim() || undefined,
+          content_id: selectedContentId || undefined,
         }),
       });
 
@@ -463,86 +465,75 @@ export default function LessonPanel({
           </div>
           <p>Generate and save lesson plans using your selected Knowledge Base content.</p>
         </div>
-        {!isContextViewerVisible && (
-          <button
-            type="button"
-            className={`status-pill status-pill--button workspace-context-pill ${currentContextLabel ? "status-pill--accent" : ""}`}
-            onClick={() => hasLinkedContent && onOpenContext && onOpenContext()}
-            disabled={!hasLinkedContent}
-            title={hasLinkedContent ? "Show source viewer" : "Select a file in Knowledge Base to enable preview"}
-          >
-            <FiBookOpen />
-            <span className="workspace-context-pill__text">
-              {currentContextLabel ? `Current Context: ${currentContextLabel}` : "Current Context: Not selected"}
-            </span>
-          </button>
-        )}
       </div>
 
-      <section className="panel-card panel-card--stretch">
-        <div className="lesson-toolbar">
-          <div className="lesson-toolbar__actions">
-            <button
-              type="button"
-              className="primary-button"
-              onClick={handleGeneratePlan}
-              disabled={loading}
-            >
-              <FiRefreshCw />
-              <span>{loading ? "Creating Lesson Plan..." : "New Lesson Plan"}</span>
-            </button>
-            {Boolean(lessonSessionId && plan) && (
+      <div className="panel-grid panel-grid--stacked">
+        <section className="panel-card">
+          <div className="study-generator-toolbar">
+            <div className="lesson-toolbar__actions">
               <button
                 type="button"
-                className="secondary-button"
-                onClick={handleRegeneratePlan}
+                className="primary-button"
+                onClick={handleGeneratePlan}
                 disabled={loading}
               >
                 <FiRefreshCw />
-                <span>{loading ? "Regenerating..." : "Regenerate Plan"}</span>
+                <span>{loading ? "Creating Lesson Plan..." : "New Lesson Plan"}</span>
               </button>
-            )}
-          </div>
-
-          <div className="lesson-toolbar__context">
-            <label htmlFor="lesson-plan-context">Optional lesson focus</label>
-            <input
-              id="lesson-plan-context"
-              type="text"
-              className="lesson-context-input"
-              placeholder="Example: exam-oriented, simple explanations, real-life examples"
-              value={lessonContext}
-              onChange={(event) => setLessonContext(event.target.value)}
-            />
-          </div>
-        </div>
-
-        {loading && <div className="stream-status"><span>{GENERATE_PHASES[loadingPhase]}</span></div>}
-
-        {lessonLimit.blocked && (
-          <div className="sidebar-note">
-            Lesson generation limit reached ({lessonLimit.used}/{lessonLimit.limit}).
-          </div>
-        )}
-
-        {error && <div className="sidebar-note">{error}</div>}
-
-        {!plan && !loading && (
-          <div className="empty-state panel-empty-state">
-            <FiBookOpen />
-            <h4>No lesson plan generated</h4>
-            <p>Create a lesson plan for the selected chapter to start guided study.</p>
-          </div>
-        )}
-
-        {plan && (
-          <>
-            <div className="workspace-sidebar__section-title">
-              <FiBookOpen />
-              <span>{chapterLabel}</span>
+              {Boolean(lessonSessionId && plan) && (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={handleRegeneratePlan}
+                  disabled={loading}
+                >
+                  <FiRefreshCw />
+                  <span>{loading ? "Regenerating..." : "Regenerate Plan"}</span>
+                </button>
+              )}
             </div>
 
-            <div className="lesson-steps lesson-steps--full">
+            <div className="lesson-toolbar__context lesson-toolbar__context--full">
+              <label htmlFor="lesson-plan-context">Optional lesson focus</label>
+              <input
+                id="lesson-plan-context"
+                type="text"
+                className="lesson-context-input"
+                placeholder="Example: exam-oriented, simple explanations, real-life examples"
+                value={lessonContext}
+                onChange={(event) => setLessonContext(event.target.value)}
+              />
+            </div>
+          </div>
+
+          {loading && <div className="stream-status"><span>{GENERATE_PHASES[loadingPhase]}</span></div>}
+
+          {lessonLimit.blocked && (
+            <div className="sidebar-note">
+              Lesson generation limit reached ({lessonLimit.used}/{lessonLimit.limit}).
+            </div>
+          )}
+
+          {error && <div className="sidebar-note">{error}</div>}
+        </section>
+
+        <section className="panel-card panel-card--stretch">
+          {!plan && !loading && (
+            <div className="empty-state panel-empty-state">
+              <FiBookOpen />
+              <h4>No lesson plan generated</h4>
+              <p>Create a lesson plan for the selected chapter to start guided study.</p>
+            </div>
+          )}
+
+          {plan && (
+            <>
+              <div className="workspace-sidebar__section-title">
+                <FiBookOpen />
+                <span>{chapterLabel}</span>
+              </div>
+
+              <div className="lesson-steps lesson-steps--full">
               {(cards.length > 0 ? cards : plan.steps || []).map((stepLike, idx) => {
                 const card = cards.length > 0
                   ? stepLike
@@ -720,9 +711,10 @@ export default function LessonPanel({
                 <span>Lesson cards completed</span>
               </div>
             )}
-          </>
-        )}
-      </section>
+            </>
+          )}
+        </section>
+      </div>
     </div>
   );
 }

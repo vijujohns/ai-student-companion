@@ -222,12 +222,35 @@ class TestRoleBasedAccess:
 
     def test_admin_reindex_allowed_for_admin(self, client):
         token = login(client, "admin@example.com", "admin123")
-        with patch("app.modules.faiss_store.load_knowledge_base", return_value=None):
+        with patch("app.modules.kb_sync.start_reindex_job", return_value={"status": "started", "type": "full", "job_id": "job-full-1"}):
             resp = client.post("/admin/reindex", headers=auth_headers(token))
         assert resp.status_code == 200
         body = resp.json()
-        assert body["status"] == "Reindex completed"
+        assert body["status"] == "started"
+        assert body["type"] == "full"
+        assert body["job_id"] == "job-full-1"
         assert "message" in body
+
+    def test_admin_reindex_control_routes_start_background_jobs(self, client):
+        token = login(client, "admin@example.com", "admin123")
+        headers = auth_headers(token)
+
+        with patch("app.modules.kb_sync.start_reindex_job", side_effect=[
+            {"status": "started", "type": "full", "job_id": "job-full-2"},
+            {"status": "started", "type": "incremental", "job_id": "job-inc-1"},
+            {"status": "started", "type": "file", "job_id": "job-file-1"},
+        ]):
+            full_resp = client.post("/admin/reindex/full", headers=headers)
+            inc_resp = client.post("/admin/reindex/incremental", headers=headers)
+            file_resp = client.post("/admin/reindex/file", headers=headers, json={"path": "Class X/General Knowledge/TextBooks/sample.pdf"})
+
+        assert full_resp.status_code == 200
+        assert full_resp.json()["type"] == "full"
+        assert inc_resp.status_code == 200
+        assert inc_resp.json()["type"] == "incremental"
+        assert file_resp.status_code == 200
+        assert file_resp.json()["type"] == "file"
+        assert file_resp.json()["job_id"] == "job-file-1"
 
     def test_admin_reindex_forbidden_for_student(self, client):
         token = login(client, "student@example.com", "student123")
@@ -245,6 +268,35 @@ class TestRoleBasedAccess:
 # ══════════════════════════════════════════════════════════════
 # 4. SESSION MANAGEMENT
 # ══════════════════════════════════════════════════════════════
+
+class TestContextPersistence:
+
+    def test_context_route_persists_mode_and_selection(self, client):
+        token = login(client, "student@example.com", "student123")
+        headers = auth_headers(token)
+
+        update_resp = client.post(
+            "/context",
+            headers=headers,
+            json={
+                "mode": "contextual",
+                "class_name": "Class 8",
+                "subject_name": "Math",
+                "folder_name": "Notes",
+                "content_id": "upload:12",
+            },
+        )
+        assert update_resp.status_code == 200
+
+        get_resp = client.get("/context", headers=headers)
+        assert get_resp.status_code == 200
+        body = get_resp.json()
+        assert body["mode"] == "contextual"
+        assert body["class_name"] == "Class 8"
+        assert body["subject_name"] == "Math"
+        assert body["folder_name"] == "Notes"
+        assert body["content_id"] == "upload:12"
+
 
 class TestSessionManagement:
 

@@ -130,17 +130,18 @@ test("upload tree shows indexed + processing selectable states", async ({ page }
   await page.getByRole("button", { name: "Continue" }).click();
 
   await expect(page.getByRole("button", { name: /New Chat/i }).first()).toBeVisible();
-  const selectors = page.locator(".workspace-context-bar select");
-  await expect(selectors.first()).toBeVisible();
-  await selectors.nth(0).selectOption({ label: "Class 8" });
-  await selectors.nth(1).selectOption({ label: "English-1" });
-  await selectors.nth(2).selectOption({ label: "Text Books" });
+  const contextDialog = page.getByRole("dialog", { name: /Choose learning context/i });
+  await expect(contextDialog).toBeVisible();
+  await contextDialog.getByLabel("Select class").selectOption({ label: "Class 8" });
+  await contextDialog.getByLabel("Select subject").selectOption({ label: "English-1" });
+  await contextDialog.getByLabel("Select folder").selectOption({ label: "Text Books" });
 
-  await expect(selectors.nth(3).locator("option", { hasText: "Indexed File (Uploaded)" })).toHaveCount(1);
-  await expect(selectors.nth(3).locator("option", { hasText: "Processing File (Uploaded) [Processing]" })).toHaveCount(1);
+  await expect(contextDialog.getByLabel("Select file").locator("option", { hasText: "Indexed File (Uploaded)" })).toHaveCount(1);
+  await expect(contextDialog.getByLabel("Select file").locator("option", { hasText: "Processing File (Uploaded) [Processing]" })).toHaveCount(1);
   await expect(
-    selectors.nth(3).locator('option[value="upload:2"]')
+    contextDialog.getByLabel("Select file").locator('option[value="upload:2"]')
   ).toBeDisabled();
+  await contextDialog.getByRole("button", { name: /Continue with this context/i }).click();
 });
 
 test("plan cap disables actions with hint", async ({ page }) => {
@@ -238,14 +239,17 @@ test("plan cap disables actions with hint", async ({ page }) => {
   await page.getByRole("button", { name: "Continue" }).click();
 
   await expect(page.getByRole("button", { name: /New Chat/i }).first()).toBeVisible();
-  const selectors = page.locator(".workspace-context-bar select");
-  await expect(selectors.first()).toBeVisible();
-  await selectors.nth(0).selectOption({ label: "Class 8" });
-  await selectors.nth(1).selectOption({ label: "English-1" });
-  await selectors.nth(2).selectOption({ label: "Text Books" });
+  const contextDialog = page.getByRole("dialog", { name: /Choose learning context/i });
+  await expect(contextDialog).toBeVisible();
+  await contextDialog.getByLabel("Select class").selectOption({ label: "Class 8" });
+  await contextDialog.getByLabel("Select subject").selectOption({ label: "English-1" });
+  await contextDialog.getByLabel("Select folder").selectOption({ label: "Text Books" });
+  await contextDialog.getByRole("button", { name: /Continue with this context/i }).click();
 
-  await expect(page.getByRole("button", { name: "Upload PDF" })).toBeDisabled();
-  await expect(page.getByText(/Upload limit reached/i)).toBeVisible();
+  await expect(page.getByText(/Upload limit reached/i).first()).toBeVisible();
+  await page.getByRole("button", { name: /Edit Context/i }).click();
+  await expect(page.getByRole("button", { name: /Choose PDF/i })).toBeDisabled();
+  await page.getByRole("button", { name: /Continue with this context/i }).click();
 
   await page.getByRole("button", { name: "Quiz" }).click();
   await page.getByRole("button", { name: "New Quiz" }).click();
@@ -418,12 +422,13 @@ test("lesson card completion and card-level quiz artifact save flow", async ({ p
   await page.getByRole("button", { name: "Continue" }).click();
 
   await expect(page.getByRole("button", { name: /New Chat/i }).first()).toBeVisible();
-  const selectors = page.locator(".workspace-context-bar select");
-  await expect(selectors.first()).toBeVisible();
-  await selectors.nth(0).selectOption({ label: "Class 8" });
-  await selectors.nth(1).selectOption({ label: "English-1" });
-  await selectors.nth(2).selectOption({ label: "Text Books" });
-  await selectors.nth(3).selectOption({ label: "Chapter 1" });
+  const contextDialog = page.getByRole("dialog", { name: /Choose learning context/i });
+  await expect(contextDialog).toBeVisible();
+  await contextDialog.getByLabel("Select class").selectOption({ label: "Class 8" });
+  await contextDialog.getByLabel("Select subject").selectOption({ label: "English-1" });
+  await contextDialog.getByLabel("Select folder").selectOption({ label: "Text Books" });
+  await contextDialog.getByLabel("Select file").selectOption({ label: "Chapter 1" });
+  await contextDialog.getByRole("button", { name: /Continue with this context/i }).click();
 
   await page.getByRole("button", { name: "Lesson" }).click();
   await page.getByRole("button", { name: "New Lesson Plan" }).click();
@@ -586,6 +591,7 @@ test("tts guardrail does not speak transport/system error text", async ({ page }
   await page.getByRole("button", { name: "Continue" }).click();
 
   await expect(page.getByRole("button", { name: /New Chat/i }).first()).toBeVisible();
+  await page.getByRole("button", { name: /Proceed in Explorer Mode/i }).click();
   await page.getByPlaceholder("Ask a question, request a summary, or work through a problem...").fill("What happened?");
   await page.getByRole("button", { name: "Send" }).click();
 

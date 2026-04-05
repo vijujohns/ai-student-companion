@@ -517,67 +517,55 @@ export default function QuizPanel({
           </div>
           <p>Generate quizzes from selected content, or switch source to a lesson card from your lesson plan.</p>
         </div>
-        {!isContextViewerVisible && (
-          <button
-            type="button"
-            className={`status-pill status-pill--button workspace-context-pill ${currentContextLabel ? "status-pill--accent" : ""}`}
-            onClick={() => hasLinkedContent && onOpenContext && onOpenContext()}
-            disabled={!hasLinkedContent}
-            title={hasLinkedContent ? "Show source viewer" : "Select a file in Knowledge Base to enable preview"}
-          >
-            <FiClipboard />
-            <span className="workspace-context-pill__text">
-              {currentContextLabel ? `Current Context: ${currentContextLabel}` : "Current Context: Not selected"}
-            </span>
-          </button>
-        )}
       </div>
 
-      <div className="panel-grid panel-grid--split">
+      <div className="panel-grid panel-grid--stacked">
         <section className="panel-card">
-          <div className="lesson-toolbar">
-            <div className="lesson-toolbar__actions">
-              <button type="button" className="primary-button" onClick={handleGenerateQuiz} disabled={loading}>
-                <FiClipboard />
-                <span>{loading ? "Creating Quiz..." : "New Quiz"}</span>
-              </button>
-              {Boolean(quizSessionId) && (
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={handleRegenerateQuiz}
-                  disabled={loading}
-                >
-                  <FiRefreshCw />
-                  <span>{loading ? "Regenerating..." : "Regenerate Quiz"}</span>
+          <div className="study-generator-toolbar">
+            <div className="study-generator-toolbar__top">
+              <div className="lesson-toolbar__actions">
+                <button type="button" className="primary-button" onClick={handleGenerateQuiz} disabled={loading}>
+                  <FiClipboard />
+                  <span>{loading ? "Creating Quiz..." : "New Quiz"}</span>
                 </button>
-              )}
+                {Boolean(quizSessionId) && (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={handleRegenerateQuiz}
+                    disabled={loading}
+                  >
+                    <FiRefreshCw />
+                    <span>{loading ? "Regenerating..." : "Regenerate Quiz"}</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="quiz-source-picker">
+                <div className="workspace-sidebar__section-title">
+                  <FiLayers />
+                  <span>Choose context for generating quiz</span>
+                </div>
+                <div className="quiz-source-toggle" role="group" aria-label="Quiz source selector">
+                  <button
+                    type="button"
+                    className={`secondary-button ${generationMode === "context" ? "quiz-source-toggle__option--active" : ""}`}
+                    onClick={() => setGenerationMode("context")}
+                  >
+                    Current Context
+                  </button>
+                  <button
+                    type="button"
+                    className={`secondary-button ${generationMode === "lesson_card" ? "quiz-source-toggle__option--active" : ""}`}
+                    onClick={() => setGenerationMode("lesson_card")}
+                  >
+                    Lesson Card
+                  </button>
+                </div>
+              </div>
             </div>
 
-            <div className="quiz-source-picker">
-              <div className="workspace-sidebar__section-title">
-                <FiLayers />
-                <span>Choose context for generating quiz</span>
-              </div>
-              <div className="quiz-source-toggle" role="group" aria-label="Quiz source selector">
-                <button
-                  type="button"
-                  className={`secondary-button ${generationMode === "context" ? "quiz-source-toggle__option--active" : ""}`}
-                  onClick={() => setGenerationMode("context")}
-                >
-                  File Context
-                </button>
-                <button
-                  type="button"
-                  className={`secondary-button ${generationMode === "lesson_card" ? "quiz-source-toggle__option--active" : ""}`}
-                  onClick={() => setGenerationMode("lesson_card")}
-                >
-                  Lesson Card
-                </button>
-              </div>
-            </div>
-
-            <div className="lesson-toolbar__context">
+            <div className="lesson-toolbar__context lesson-toolbar__context--full">
               <label htmlFor="quiz-context">Optional quiz focus</label>
               <input
                 id="quiz-context"
@@ -651,7 +639,7 @@ export default function QuizPanel({
             <div className="empty-state panel-empty-state">
               <FiClipboard />
               <h4>No quiz loaded</h4>
-              <p>Use the source selector and generate a quiz from selected file context or lesson card.</p>
+              <p>Use the source selector and generate a quiz from your current context or a lesson card.</p>
             </div>
           )}
 

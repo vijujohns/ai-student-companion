@@ -26,3 +26,4 @@
 - Consider promoting the new logical smart-index buckets into physically sharded FAISS files only if corpus size or reindex time grows enough to justify the added operational complexity.
 - Consider moving the new grounding thresholds and fail-safe strictness into config so citation/overlap sensitivity can be tuned per task without code changes.
 - Consider adding schema-level output validation at the generator boundary (for example quiz answer/explanation enforcement) and a lightweight non-LLM OCR summary fallback to reduce reliance on model formatting during feature flows.
+- The live FAISS corpus in this workspace was empty during Step 13 manual validation; further precision tuning should be re-checked after representative PDFs are indexed so the reranker can be evaluated against real study material, not only the synthetic sample dataset.

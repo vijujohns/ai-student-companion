@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { FiBookOpen, FiLayers, FiRefreshCw, FiSave } from "react-icons/fi";
+import { FiLayers, FiRefreshCw, FiSave } from "react-icons/fi";
 import { apiFetch, parseApiError } from "../services/api";
 
 function createSessionId() {
@@ -45,7 +45,6 @@ export default function FlashcardPanel({
   const flashcardUsage = Number(planSummary?.usage?.flashcard_count || 0);
   const flashcardLimit = Number(planSummary?.limits?.flashcard_count || 0);
   const flashcardBlocked = flashcardLimit > 0 ? flashcardUsage >= flashcardLimit : false;
-  const selectedContext = (currentContextLabel || defaultChapter || "").trim();
 
   const ensureSession = useCallback(() => {
     if (flashcardSessionId) return flashcardSessionId;
@@ -398,71 +397,59 @@ export default function FlashcardPanel({
           </div>
           <p>Generate revision cards from lesson cards, with history managed in the sidebar.</p>
         </div>
-        {!isContextViewerVisible && (
-          <button
-            type="button"
-            className={`status-pill status-pill--button workspace-context-pill ${selectedContext ? "status-pill--accent" : ""}`}
-            onClick={() => hasLinkedContent && onOpenContext && onOpenContext()}
-            disabled={!hasLinkedContent}
-            title={hasLinkedContent ? "Show source viewer" : "Select a file in Knowledge Base to enable preview"}
-          >
-            <FiBookOpen />
-            <span className="workspace-context-pill__text">
-              {selectedContext ? `Current Context: ${selectedContext}` : "Current Context: Not selected"}
-            </span>
-          </button>
-        )}
       </div>
 
-      <div className="panel-grid panel-grid--split">
+      <div className="panel-grid panel-grid--stacked">
         <section className="panel-card">
-          <div className="lesson-toolbar">
-            <div className="lesson-toolbar__actions">
-              <button
-                type="button"
-                className="primary-button"
-                onClick={handleGenerateFlashcards}
-                disabled={loading || flashcardBlocked}
-              >
-                <span>{loading ? "Creating Flashcards..." : "New Flashcards"}</span>
-              </button>
-              {Boolean(flashcardSessionId) && (
+          <div className="study-generator-toolbar">
+            <div className="study-generator-toolbar__top">
+              <div className="lesson-toolbar__actions">
                 <button
                   type="button"
-                  className="secondary-button"
-                  onClick={handleRegenerateFlashcards}
+                  className="primary-button"
+                  onClick={handleGenerateFlashcards}
                   disabled={loading || flashcardBlocked}
                 >
-                  <FiRefreshCw />
-                  <span>{loading ? "Regenerating..." : "Regenerate Flashcards"}</span>
+                  <span>{loading ? "Creating Flashcards..." : "New Flashcards"}</span>
                 </button>
-              )}
+                {Boolean(flashcardSessionId) && (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={handleRegenerateFlashcards}
+                    disabled={loading || flashcardBlocked}
+                  >
+                    <FiRefreshCw />
+                    <span>{loading ? "Regenerating..." : "Regenerate Flashcards"}</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="quiz-source-picker">
+                <div className="workspace-sidebar__section-title">
+                  <FiLayers />
+                  <span>Choose context for generating flashcards</span>
+                </div>
+                <div className="quiz-source-toggle" role="group" aria-label="Flashcard source selector">
+                  <button
+                    type="button"
+                    className={`secondary-button ${generationMode === "context" ? "quiz-source-toggle__option--active" : ""}`}
+                    onClick={() => setGenerationMode("context")}
+                  >
+                    Current Context
+                  </button>
+                  <button
+                    type="button"
+                    className={`secondary-button ${generationMode === "lesson_card" ? "quiz-source-toggle__option--active" : ""}`}
+                    onClick={() => setGenerationMode("lesson_card")}
+                  >
+                    Lesson Card
+                  </button>
+                </div>
+              </div>
             </div>
 
-            <div className="quiz-source-picker">
-              <div className="workspace-sidebar__section-title">
-                <FiLayers />
-                <span>Choose context for generating flashcards</span>
-              </div>
-              <div className="quiz-source-toggle" role="group" aria-label="Flashcard source selector">
-                <button
-                  type="button"
-                  className={`secondary-button ${generationMode === "context" ? "quiz-source-toggle__option--active" : ""}`}
-                  onClick={() => setGenerationMode("context")}
-                >
-                  File Context
-                </button>
-                <button
-                  type="button"
-                  className={`secondary-button ${generationMode === "lesson_card" ? "quiz-source-toggle__option--active" : ""}`}
-                  onClick={() => setGenerationMode("lesson_card")}
-                >
-                  Lesson Card
-                </button>
-              </div>
-            </div>
-
-            <div className="lesson-toolbar__context">
+            <div className="lesson-toolbar__context lesson-toolbar__context--full">
               <label htmlFor="flashcard-context">Optional flashcard focus</label>
               <input
                 id="flashcard-context"
@@ -536,7 +523,7 @@ export default function FlashcardPanel({
             <div className="empty-state panel-empty-state">
               <FiLayers />
               <h4>No flashcards generated</h4>
-              <p>Use the context selector above to generate flashcards from file context or lesson card context.</p>
+              <p>Use the context selector above to generate flashcards from your current context or a lesson card.</p>
             </div>
           )}
 

@@ -87,10 +87,11 @@ test("logs out automatically and shows a session expired message after a 401", a
   await page.getByRole("button", { name: "Continue" }).click();
 
   await expect(page.getByRole("button", { name: /New Chat/i }).first()).toBeVisible();
-  await expect(page.locator(".workspace-context-bar select").first()).toBeVisible();
+  const contextDialog = page.getByRole("dialog", { name: /Choose learning context/i });
+  await expect(contextDialog).toBeVisible();
 
   expireSession = true;
-  await page.locator(".workspace-context-bar select").first().selectOption({ label: "Class 8" });
+  await contextDialog.getByLabel("Select class").selectOption({ label: "Class 8" });
 
   await expect(page.getByText("Your session has expired. Please log in again.")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Login" })).toBeVisible();

@@ -261,18 +261,51 @@ class SetSessionContentRequest(BaseModel):
     )
 
 
+class ContextSelectionRequest(BaseModel):
+    """Persist the user's global learning context or Explorer Mode selection."""
+
+    mode: str = Field("contextual", max_length=20)
+    class_name: Optional[str] = Field(None, max_length=100)
+    subject_name: Optional[str] = Field(None, max_length=100)
+    folder_name: Optional[str] = Field(None, max_length=100)
+    content_id: Optional[str] = Field(None, min_length=1, max_length=1000)
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, v: str) -> str:
+        normalized = str(v or "contextual").strip().lower()
+        if normalized not in {"contextual", "explorer"}:
+            raise ValueError("Mode must be contextual or explorer.")
+        return normalized
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "example": {
+                "mode": "contextual",
+                "class_name": "Class 8",
+                "subject_name": "Math",
+                "folder_name": "Notes",
+                "content_id": "upload:12",
+            }
+        },
+    )
+
+
 class LessonPlanCreateRequest(BaseModel):
     """Create lesson plan endpoint validation"""
     chapter: str = Field(..., min_length=1, max_length=500)
     session_id: Optional[str] = Field(None, max_length=100)
     lesson_context: Optional[str] = Field(None, max_length=1000)
+    content_id: Optional[str] = Field(None, min_length=1, max_length=1000)
 
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "chapter": "Photosynthesis",
                 "session_id": "uuid-here",
-                "lesson_context": "Focus on exam-style questions and simple analogies"
+                "lesson_context": "Focus on exam-style questions and simple analogies",
+                "content_id": "kb:Q2xhc3MtMTAvQmlvbG9neS9QaG90b3N5bnRoZXNpcy5wZGY"
             }
         }
     )

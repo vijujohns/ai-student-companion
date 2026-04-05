@@ -271,4 +271,14 @@ describe("WebSocket service", () => {
     );
     expect(cb).toHaveBeenCalledWith("[END]");
   });
+
+  it("surfaces server error payloads before ending the stream", () => {
+    const cb = vi.fn();
+    const ws = connectWebSocket(cb, () => {}, "ask");
+
+    ws.onmessage({ data: JSON.stringify({ type: "error", data: "Plan limit reached for this action." }) });
+
+    expect(cb).toHaveBeenCalledWith(expect.stringContaining("Plan limit reached"));
+    expect(cb).toHaveBeenCalledWith("[END]");
+  });
 });

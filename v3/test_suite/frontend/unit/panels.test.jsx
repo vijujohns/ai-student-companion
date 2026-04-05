@@ -582,14 +582,81 @@ describe('ChatPanel Component', () => {
     const view = await renderWithEffects(<ChatPanel initialActiveTab="chat" />);
 
     expect(view.container.querySelector('.workspace-context-bar')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /upload pdf/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /edit context/i })).toBeInTheDocument();
+    expect(screen.queryByText(/knowledge base loaded\./i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/folder optional|file optional/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/all available classes are currently visible for your current plan\./i)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^subscription$/i })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /edit context/i }));
+    expect(await screen.findByText(/subscribed classes: class 8/i)).toBeInTheDocument();
 
     await rerenderWithEffects(view, <ChatPanel initialActiveTab="progress" />);
 
     expect(view.container.querySelector('.workspace-context-bar')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /upload pdf/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /edit context/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^subscription$/i })).not.toBeInTheDocument();
+  }, 15000);
+
+  it('opens the learning context modal and supports Explorer Mode', async () => {
+    global.fetch.mockImplementation((url) => {
+      const target = String(url);
+
+      if (target.includes('/classes')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ classes: ['Class 8'] }),
+        });
+      }
+
+      if (target.includes('/context')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ mode: null, class_name: null, subject_name: null, folder_name: null, content_id: null }),
+        });
+      }
+
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ sessions: [], data: {}, items: [] }) });
+    });
+
+    await renderWithEffects(<ChatPanel initialActiveTab="chat" />);
+
+    expect(await screen.findByRole('dialog', { name: /choose learning context/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /proceed in explorer mode/i }));
+
+    expect(await screen.findByText(/Explorer Mode · choose a class to unlock guided study tools/i)).toBeInTheDocument();
+  }, 15000);
+
+  it('blocks lesson access until class and subject are selected', async () => {
+    global.fetch.mockImplementation((url) => {
+      const target = String(url);
+
+      if (target.includes('/classes')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ classes: ['Class 8'] }),
+        });
+      }
+
+      if (target.includes('/context')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ mode: null, class_name: null, subject_name: null, folder_name: null, content_id: null }),
+        });
+      }
+
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ sessions: [], data: {}, items: [] }) });
+    });
+
+    await renderWithEffects(<ChatPanel initialActiveTab="lesson" />);
+
+    expect(await screen.findByText(/Please select your class and subject to continue/i)).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: /choose learning context/i })).toBeInTheDocument();
   }, 15000);
 
   it('shows a dedicated assignments workspace for students', async () => {
@@ -911,6 +978,8 @@ describe('LessonPanel Component', () => {
   it('displays lesson panel structure', () => {
     const { container } = render(<LessonPanel />);
     expect(container.children.length).toBeGreaterThan(0);
+    expect(container.querySelector('.panel-grid--stacked')).toBeInTheDocument();
+    expect(container.querySelector('.panel-card--stretch')).toBeInTheDocument();
   });
 
   it('accepts chapter prop', () => {
@@ -958,6 +1027,8 @@ describe('QuizPanel Component', () => {
   it('displays quiz panel structure', async () => {
     const { container } = await renderWithEffects(<QuizPanel />);
     expect(container.children.length).toBeGreaterThan(0);
+    expect(container.querySelector('.panel-grid--stacked')).toBeInTheDocument();
+    expect(container.querySelector('.panel-grid--split')).not.toBeInTheDocument();
   });
 
   it('accepts session prop', async () => {
@@ -968,8 +1039,9 @@ describe('QuizPanel Component', () => {
   it('displays quiz controls', async () => {
     const { container } = await renderWithEffects(<QuizPanel />);
     const buttons = container.querySelectorAll('button');
-    // Quiz should have interactive buttons
     expect(buttons.length).toBeGreaterThanOrEqual(0);
+    expect(screen.getByRole('button', { name: /current context/i })).toBeInTheDocument();
+    expect(container.querySelector('.study-generator-toolbar')).toBeInTheDocument();
   });
 
   it('handles empty session gracefully', async () => {
@@ -1012,6 +1084,8 @@ describe('FlashcardPanel Component', () => {
   it('displays flashcard panel structure', async () => {
     const { container } = await renderWithEffects(<FlashcardPanel />);
     expect(container.children.length).toBeGreaterThan(0);
+    expect(container.querySelector('.panel-grid--stacked')).toBeInTheDocument();
+    expect(container.querySelector('.panel-grid--split')).not.toBeInTheDocument();
   });
 
   it('accepts deck prop', async () => {
@@ -1021,8 +1095,9 @@ describe('FlashcardPanel Component', () => {
 
   it('displays card navigation', async () => {
     const { container } = await renderWithEffects(<FlashcardPanel />);
-    // Should have previous/next or similar navigation
     expect(container.innerHTML.length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: /current context/i })).toBeInTheDocument();
+    expect(container.querySelector('.study-generator-toolbar')).toBeInTheDocument();
   });
 
   it('handles empty deck gracefully', async () => {
@@ -2430,6 +2505,99 @@ describe('RoleHubPanel and AdminPanel Components', () => {
     expect(screen.getByLabelText(/view workspace as/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /reindex knowledge base/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /incremental reindex/i })).toBeInTheDocument();
+  });
+
+  it('shows live indexing progress and current file details for admins', async () => {
+    localStorage.setItem('role', 'admin');
+    localStorage.setItem('username', 'admin');
+
+    global.fetch.mockImplementation((url, options = {}) => {
+      const target = String(url);
+      const method = String(options?.method || 'GET').toUpperCase();
+
+      if (target.includes('/admin/model-profiles') && method === 'GET') {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            active_profile: 'balanced',
+            profiles: [{ key: 'balanced', label: 'Balanced', description: 'Good quality and speed.', task_models: {} }],
+          }),
+        });
+      }
+
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) });
+    });
+
+    await renderWithEffects(
+      <AdminPanel
+        viewRole="admin"
+        onAdminViewRoleChange={vi.fn()}
+        onAdminReindex={vi.fn()}
+        onAdminIncrementalReindex={vi.fn()}
+        adminRunning
+        adminMessage="Knowledge base reindex is running… 50%"
+        adminStatus={{
+          title: 'Knowledge base reindex is running… 50%',
+          detail: 'Processing Class X/Physics/refraction.pdf. Current file: Class X/Physics/refraction.pdf.',
+          stats: { scanned: 2, total: 4, reindexed: 1, skipped: 1, removed: 0 },
+          currentFile: 'Class X/Physics/refraction.pdf',
+          processedFiles: ['Class X/Biology/intro.pdf'],
+          errors: [],
+        }}
+      />
+    );
+
+    expect(await screen.findByText(/knowledge base reindex is running/i)).toBeInTheDocument();
+    expect(screen.getByText(/scanned 2 \/ 4 · reindexed 1 · skipped 1 · removed 0/i)).toBeInTheDocument();
+    expect(screen.getByText(/^current file$/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/refraction\.pdf/i).length).toBeGreaterThan(0);
+  });
+
+  it('shows detailed indexing status after an admin reindex completes', async () => {
+    localStorage.setItem('role', 'admin');
+    localStorage.setItem('username', 'admin');
+
+    global.fetch.mockImplementation((url, options = {}) => {
+      const target = String(url);
+      const method = String(options?.method || 'GET').toUpperCase();
+
+      if (target.includes('/admin/model-profiles') && method === 'GET') {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            active_profile: 'balanced',
+            profiles: [{ key: 'balanced', label: 'Balanced', description: 'Good quality and speed.', task_models: {} }],
+          }),
+        });
+      }
+
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) });
+    });
+
+    await renderWithEffects(
+      <AdminPanel
+        viewRole="admin"
+        onAdminViewRoleChange={vi.fn()}
+        onAdminReindex={vi.fn()}
+        onAdminIncrementalReindex={vi.fn()}
+        adminMessage="Reindex completed."
+        adminStatus={{
+          title: 'Reindex completed.',
+          detail: 'Full scan finished. Scanned 4 file(s), reindexed 2, skipped 2, and removed 0.',
+          stats: { scanned: 4, total: 4, reindexed: 2, skipped: 2, removed: 0 },
+          currentFile: '',
+          processedFiles: ['Class X/Physics/refraction.pdf', 'Class X/Biology/photosynthesis.pdf'],
+          errors: [],
+        }}
+      />
+    );
+
+    expect(await screen.findByText(/full scan finished/i)).toBeInTheDocument();
+    expect(screen.getByText(/scanned 4 \/ 4 · reindexed 2 · skipped 2 · removed 0/i)).toBeInTheDocument();
+    expect(screen.getByText(/refraction\.pdf/i)).toBeInTheDocument();
+    expect(screen.getByText(/photosynthesis\.pdf/i)).toBeInTheDocument();
   });
 
   it('shows a parent dashboard summary for a linked learner', async () => {

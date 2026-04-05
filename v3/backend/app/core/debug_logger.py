@@ -22,6 +22,9 @@ load_dotenv()
 _DEBUG: bool = os.getenv("DEBUG_LOGGING", "false").lower() in ("true", "1", "yes")
 _LOG_FILE: str = os.getenv("DEBUG_LOG_FILE", "")
 
+# Never let logging internals crash request handling on Windows consoles.
+logging.raiseExceptions = False
+
 # ── Logger setup ─────────────────────────────────────────────────────────────
 _logger = logging.getLogger("brain_teaser")
 _logger.setLevel(logging.DEBUG if _DEBUG else logging.WARNING)
@@ -56,6 +59,23 @@ def is_debug() -> bool:
     return _DEBUG
 
 
+def _normalize_log_text(value) -> str:
+    text = str(value)
+    return text.replace("→", "->").replace("←", "<-")
+
+
+def _safe_emit(level: str, text: str) -> None:
+    safe_text = _normalize_log_text(text)
+    try:
+        getattr(_logger, level)(safe_text)
+    except Exception:
+        try:
+            fallback = safe_text.encode("ascii", errors="backslashreplace").decode("ascii", errors="ignore")
+            sys.__stderr__.write(f"{fallback}\n")
+        except Exception:
+            pass
+
+
 def dlog(tag: str, message: str, **extra) -> None:
     """
     Emit a structured debug log line.
@@ -67,17 +87,17 @@ def dlog(tag: str, message: str, **extra) -> None:
     """
     if not _DEBUG:
         return
-    suffix = (" | " + " | ".join(f"{k}={v!r}" for k, v in extra.items())) if extra else ""
-    _logger.debug(f"[{tag}] {message}{suffix}")
+    suffix = (" | " + " | ".join(f"{k}={_normalize_log_text(v)!r}" for k, v in extra.items())) if extra else ""
+    _safe_emit("debug", f"[{tag}] {_normalize_log_text(message)}{suffix}")
 
 
 def dwarn(tag: str, message: str, **extra) -> None:
     """Emit a structured warning — always visible regardless of DEBUG_LOGGING."""
-    suffix = (" | " + " | ".join(f"{k}={v!r}" for k, v in extra.items())) if extra else ""
-    _logger.warning(f"[{tag}] {message}{suffix}")
+    suffix = (" | " + " | ".join(f"{k}={_normalize_log_text(v)!r}" for k, v in extra.items())) if extra else ""
+    _safe_emit("warning", f"[{tag}] {_normalize_log_text(message)}{suffix}")
 
 
 def derror(tag: str, message: str, **extra) -> None:
     """Emit a structured error — always visible regardless of DEBUG_LOGGING."""
-    suffix = (" | " + " | ".join(f"{k}={v!r}" for k, v in extra.items())) if extra else ""
-    _logger.error(f"[{tag}] {message}{suffix}")
+    suffix = (" | " + " | ".join(f"{k}={_normalize_log_text(v)!r}" for k, v in extra.items())) if extra else ""
+    _safe_emit("error", f"[{tag}] {_normalize_log_text(message)}{suffix}")

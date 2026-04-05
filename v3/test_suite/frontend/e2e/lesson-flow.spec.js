@@ -119,12 +119,14 @@ test("lesson plan generation flow works", async ({ page }) => {
   await page.getByPlaceholder("Password").fill("student123");
   await page.getByRole("button", { name: "Continue" }).click();
 
-  const selectors = page.locator(".workspace-context-bar select");
-  await selectors.nth(0).selectOption({ label: "Class 8" });
-  await selectors.nth(1).selectOption({ label: "English-1" });
-  await selectors.nth(2).selectOption({ label: "Text Books" });
-  await expect(selectors.nth(3).locator("option", { hasText: "Chapter 1" })).toHaveCount(1);
-  await selectors.nth(3).selectOption({ label: "Chapter 1" });
+  const contextDialog = page.getByRole("dialog", { name: /Choose learning context/i });
+  await expect(contextDialog).toBeVisible();
+  await contextDialog.getByLabel("Select class").selectOption({ label: "Class 8" });
+  await contextDialog.getByLabel("Select subject").selectOption({ label: "English-1" });
+  await contextDialog.getByLabel("Select folder").selectOption({ label: "Text Books" });
+  await expect(contextDialog.getByLabel("Select file").locator("option", { hasText: "Chapter 1" })).toHaveCount(1);
+  await contextDialog.getByLabel("Select file").selectOption({ label: "Chapter 1" });
+  await contextDialog.getByRole("button", { name: /Continue with this context/i }).click();
 
   await page.getByRole("button", { name: "Lesson" }).click();
   await page.getByRole("button", { name: "New Lesson Plan" }).click();

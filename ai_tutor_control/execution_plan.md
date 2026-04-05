@@ -59,8 +59,9 @@ approval_required: true
 notes: User approval received on 2026-04-04; Step 12B grounding fixes, Step 12C smart reindexing, and Step 12D feature correction/stabilization are now closed with full regression verification (`555 passed, 1 skipped` backend; `169 passed` frontend unit; `15 passed` Playwright).
 
 Step 13: RAG Optimization 
-status : PENDING 
+status : IN PROGRESS 
 approval_required: true
+notes: Precision-only RAG tuning implemented on 2026-04-05: task-tuned top_k selection (`quiz=3`, `lesson/qa=4`, `summary=5`), query rewriting, metadata-aware re-ranking/noise filtering, structured context sections, and stricter explanation/summary/quiz prompts. Full regression verified (`559 passed, 1 skipped` backend; `169 passed` frontend unit; `15 passed` Playwright). Waiting for user approval before closure.
 
 Step 14: Performance Optimization 
 status : PENDING 
@@ -73,3 +74,8 @@ approval_required: false
 Step 16: Production Hardening
 status : PENDING 
 approval_required: false
+
+Step 17: Context System + Explorer Mode Implementation
+status : COMPLETED
+approval_required: true
+notes: Approved and implemented on 2026-04-05 under STRICT EXECUTION MODE. Added a post-login learning-context modal, optional Explorer Mode, global `/context` persistence, student-friendly background content preparation UX, redundant selector cleanup, and student-safe general chat behavior. Full regression verified (`570 passed, 1 skipped` backend; `173 passed` frontend unit; `15 passed` Playwright). Stopped after implementation + validation as requested.

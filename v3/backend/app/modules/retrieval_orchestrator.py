@@ -8,6 +8,7 @@ This Step 8 slice keeps the existing FAISS-backed store intact while adding:
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Any, Iterable, Optional, Sequence
 
@@ -40,6 +41,7 @@ def build_index_plan(task: str = "qa", filter_path: Optional[str] = None) -> lis
     normalized_task = str(task or "qa").strip().lower() or "qa"
     plans = {
         "qa": ["curriculum", "upload", "session", "artifact", "general"],
+        "explanation": ["curriculum", "upload", "artifact", "session"],
         "summary": ["upload", "curriculum", "session"],
         "lesson": ["curriculum", "upload", "artifact", "session"],
         "quiz": ["curriculum", "artifact", "upload", "session"],
@@ -55,6 +57,7 @@ def build_logical_index_plan(task: str = "qa") -> list[str]:
     normalized_task = str(task or "qa").strip().lower() or "qa"
     plans = {
         "qa": ["concept_index", "summary_index", "qa_index"],
+        "explanation": ["concept_index", "summary_index", "qa_index"],
         "summary": ["summary_index", "concept_index", "qa_index"],
         "lesson": ["concept_index", "summary_index", "qa_index"],
         "quiz": ["qa_index", "concept_index", "summary_index"],
@@ -95,6 +98,33 @@ def _lexical_score(query: str, text: str, source: Optional[str]) -> tuple[float,
     return overlap_ratio + phrase_boost + frequency_boost, matched_terms
 
 
+def _infer_query_intent(query: str) -> str:
+    lowered = str(query or "").strip().lower()
+    if any(term in lowered for term in ("summarize", "summarise", "summary", "overview", "key points")):
+        return "summary"
+    if any(term in lowered for term in ("quiz", "mcq", "multiple choice", "test me")):
+        return "quiz"
+    if any(term in lowered for term in ("solve", "equation", "formula", "calculate", "derive")):
+        return "math"
+    if any(term in lowered for term in ("explain", "what is", "why", "how", "describe", "definition")):
+        return "explanation"
+    return "qa"
+
+
+def _metadata_text(metadata: dict[str, Any]) -> str:
+    return " ".join(
+        str(metadata.get(field) or "")
+        for field in ("chapter", "topic", "type", "modality")
+    ).strip()
+
+
+def _normalize_path_for_compare(path: Optional[str]) -> str:
+    raw = str(path or "").strip()
+    if not raw:
+        return ""
+    return os.path.normcase(os.path.normpath(raw)).replace("\\", "/")
+
+
 def hybrid_rank_results(
     query: str,
     docs: Sequence[Any],
@@ -106,8 +136,11 @@ def hybrid_rank_results(
     task: str = "qa",
     source_types: Optional[Sequence[str]] = None,
 ) -> list[dict[str, Any]]:
-    preferred_sources = set(source_types or build_index_plan(task, filter_path))
-    preferred_indexes = set(build_logical_index_plan(task))
+    requested_task = str(task or "qa").strip().lower() or "qa"
+    effective_task = _infer_query_intent(query) if requested_task in {"qa", "lesson"} else requested_task
+    preferred_sources = set(source_types or build_index_plan(effective_task, filter_path))
+    preferred_indexes = set(build_logical_index_plan(effective_task))
+    normalized_filter_path = _normalize_path_for_compare(filter_path)
     score_map: dict[int, dict[str, Any]] = {}
 
     def ensure_entry(doc_index: int) -> Optional[dict[str, Any]]:
@@ -121,7 +154,7 @@ def hybrid_rank_results(
         source = normalized.get("source")
         if not text:
             return None
-        if filter_path and source != filter_path:
+        if normalized_filter_path and _normalize_path_for_compare(source) != normalized_filter_path:
             return None
 
         entry = {
@@ -164,6 +197,12 @@ def hybrid_rank_results(
         if matched_terms:
             entry["matched_terms"] = sorted(set([*entry["matched_terms"], *matched_terms]))
 
+        metadata = entry.get("metadata") or {}
+        metadata_score, metadata_terms = _lexical_score(query, _metadata_text(metadata), None)
+        entry["metadata_score"] = max(float(entry.get("metadata_score", 0.0)), metadata_score)
+        if metadata_terms:
+            entry["matched_terms"] = sorted(set([*entry["matched_terms"], *metadata_terms]))
+
         if filter_path:
             source_bonus = 0.18
         elif entry["source_type"] in preferred_sources:
@@ -181,12 +220,33 @@ def hybrid_rank_results(
         else:
             index_bonus = -0.02
 
+        chunk_type = str(metadata.get("type") or "").strip().lower()
+        type_bonus = 0.0
+        if effective_task in {"lesson", "explanation", "qa"} and chunk_type in {"concept", "definition", "example"}:
+            type_bonus = 0.12 if chunk_type != "example" else 0.07
+        elif effective_task in {"quiz", "assessment"} and chunk_type == "question":
+            type_bonus = 0.12
+        elif effective_task == "math" and chunk_type == "formula":
+            type_bonus = 0.16
+        elif effective_task == "summary" and chunk_type in {"concept", "definition", "example"}:
+            type_bonus = 0.09
+
+        token_count = len(_tokenize(entry["text"]))
+        noise_penalty = 0.0
+        if token_count < 4:
+            noise_penalty -= 0.10
+        if token_count < 8 and not entry["matched_terms"]:
+            noise_penalty -= 0.08
+
         entry["score"] = (
-            (entry["lexical_score"] * 0.65)
-            + (entry["vector_score"] * 0.35)
+            (entry["lexical_score"] * 0.55)
+            + (entry["metadata_score"] * 0.15)
+            + (entry["vector_score"] * 0.30)
             + entry["rank_bonus"]
             + source_bonus
             + index_bonus
+            + type_bonus
+            + noise_penalty
         )
 
     ranked = sorted(
@@ -201,6 +261,15 @@ def hybrid_rank_results(
         text_key = item["text"].strip().lower()
         if not text_key or text_key in seen_texts:
             continue
+
+        has_signal = (
+            float(item.get("lexical_score", 0.0)) > 0.0
+            or float(item.get("metadata_score", 0.0)) > 0.0
+            or float(item.get("vector_score", 0.0)) >= 0.12
+        )
+        if not has_signal:
+            continue
+
         seen_texts.add(text_key)
         deduped.append(item)
         if len(deduped) >= max(1, int(top_k or 1)):

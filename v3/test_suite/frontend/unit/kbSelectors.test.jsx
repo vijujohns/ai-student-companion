@@ -54,6 +54,6 @@ describe("kbSelectors", () => {
       pendingUploadsInScope: 2,
     });
 
-    expect(message).toContain("2 uploaded file(s) are still indexing");
+    expect(message).toContain("2 uploaded file(s) are still being prepared");
   });
 });

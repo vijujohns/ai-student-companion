@@ -23,6 +23,7 @@ _SUPPORTED_TASKS = {
     "assessment",
     "translation",
     "math",
+    "explorer",
     "admin/system",
 }
 
@@ -43,6 +44,10 @@ _TASK_ALIASES = {
     "flashcard": "flashcards",
     "cards": "flashcards",
     "translate": "translation",
+    "explore": "explorer",
+    "general": "explorer",
+    "general_chat": "explorer",
+    "explorer_mode": "explorer",
 }
 
 _SUMMARY_HINTS = (
@@ -60,7 +65,7 @@ _ASSESSMENT_HINTS = ("assessment", "exam paper", "question paper", "mock test")
 _LESSON_HINTS = ("teach me", "lesson", "study plan", "walk me through", "explain this chapter")
 _TRANSLATION_HINTS = ("translate", "translation", "in hindi", "in tamil", "in french", "in spanish")
 _MATH_PATTERN = re.compile(
-    r"(solve\s+for|what\s+is\s+\d+\s*[+\-*/^=]|\d+\s*[+\-*/^=]\s*\d+|equation|algebra|geometry|integrate|differentiate|derivative|fraction)",
+    r"(solve\s+for|what\s+is\s+\d+\s*[+\-*/^=]|\d+\s*[+\-*/^=]\s*\d+|equation|algebra|geometry|integrate|differentiate|derivative|fraction|calculate|refractive\s+index|speed\s+of\s+light)",
     re.IGNORECASE,
 )
 
@@ -87,12 +92,14 @@ def normalize_task_name(task: Optional[str]) -> Optional[str]:
 
 
 def _model_task_for(task: str) -> str:
-    if task in {"qa", "summary", "lesson", "quiz", "flashcards"}:
+    if task in {"qa", "summary", "lesson", "quiz", "flashcards", "explorer", "math", "translation"}:
         return task
     return "qa"
 
 
 def _scope_for(task: str, content_id: Optional[str]) -> str:
+    if task == "explorer":
+        return "general"
     if content_id:
         return "selected_content"
     if task in {"lesson", "quiz", "assessment", "flashcards", "summary"}:

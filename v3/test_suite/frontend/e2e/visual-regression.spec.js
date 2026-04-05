@@ -227,12 +227,13 @@ test.describe("visual ui regression", () => {
 
     await expect(page.getByRole("button", { name: /New Chat/i }).first()).toBeVisible();
 
-    const selectors = page.locator(".workspace-context-bar select");
-    await expect(selectors.first()).toBeVisible();
-    await selectors.nth(0).selectOption({ label: "Class 8" });
-    await selectors.nth(1).selectOption({ label: "English-1" });
-    await selectors.nth(2).selectOption({ label: "Text Books" });
-    await selectors.nth(3).selectOption({ label: "Chapter 1" });
+    const contextDialog = page.getByRole("dialog", { name: /Choose learning context/i });
+    await expect(contextDialog).toBeVisible();
+    await contextDialog.getByLabel("Select class").selectOption({ label: "Class 8" });
+    await contextDialog.getByLabel("Select subject").selectOption({ label: "English-1" });
+    await contextDialog.getByLabel("Select folder").selectOption({ label: "Text Books" });
+    await contextDialog.getByLabel("Select file").selectOption({ label: "Chapter 1" });
+    await contextDialog.getByRole("button", { name: /Continue with this context/i }).click();
 
     await expect(page).toHaveScreenshot("visual-chat-workspace.png", {
       fullPage: true,
@@ -251,12 +252,13 @@ test.describe("visual ui regression", () => {
     await page.getByRole("button", { name: "Continue" }).click();
 
     await expect(page.getByRole("button", { name: /New Chat/i }).first()).toBeVisible();
-    const selectors = page.locator(".workspace-context-bar select");
-    await expect(selectors.first()).toBeVisible();
-    await selectors.nth(0).selectOption({ label: "Class 8" });
-    await selectors.nth(1).selectOption({ label: "English-1" });
-    await selectors.nth(2).selectOption({ label: "Text Books" });
-    await selectors.nth(3).selectOption({ label: "Chapter 1" });
+    const contextDialog = page.getByRole("dialog", { name: /Choose learning context/i });
+    await expect(contextDialog).toBeVisible();
+    await contextDialog.getByLabel("Select class").selectOption({ label: "Class 8" });
+    await contextDialog.getByLabel("Select subject").selectOption({ label: "English-1" });
+    await contextDialog.getByLabel("Select folder").selectOption({ label: "Text Books" });
+    await contextDialog.getByLabel("Select file").selectOption({ label: "Chapter 1" });
+    await contextDialog.getByRole("button", { name: /Continue with this context/i }).click();
 
     await page.getByRole("button", { name: "Lesson" }).click();
     await page.getByRole("button", { name: "New Lesson Plan" }).click();
@@ -278,12 +280,13 @@ test.describe("visual ui regression", () => {
     await page.getByRole("button", { name: "Continue" }).click();
 
     await expect(page.getByRole("button", { name: /New Chat/i }).first()).toBeVisible();
-    const selectors = page.locator(".workspace-context-bar select");
-    await expect(selectors.first()).toBeVisible();
-    await selectors.nth(0).selectOption({ label: "Class 8" });
-    await selectors.nth(1).selectOption({ label: "English-1" });
-    await selectors.nth(2).selectOption({ label: "Text Books" });
-    await selectors.nth(3).selectOption({ label: "Chapter 1" });
+    const contextDialog = page.getByRole("dialog", { name: /Choose learning context/i });
+    await expect(contextDialog).toBeVisible();
+    await contextDialog.getByLabel("Select class").selectOption({ label: "Class 8" });
+    await contextDialog.getByLabel("Select subject").selectOption({ label: "English-1" });
+    await contextDialog.getByLabel("Select folder").selectOption({ label: "Text Books" });
+    await contextDialog.getByLabel("Select file").selectOption({ label: "Chapter 1" });
+    await contextDialog.getByRole("button", { name: /Continue with this context/i }).click();
 
     await page.getByRole("button", { name: "Quiz" }).click();
     await page.getByRole("button", { name: "New Quiz" }).click();

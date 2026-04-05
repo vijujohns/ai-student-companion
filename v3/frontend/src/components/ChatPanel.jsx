@@ -279,6 +279,196 @@ function getWorkspaceNavSections(userRole = "student", actualUserRole = userRole
   ];
 }
 
+function formatIndexTargetLabel(target = "") {
+  const normalized = String(target || "").trim().toLowerCase();
+  const labels = {
+    concept_index: "concept",
+    summary_index: "summary",
+    qa_index: "Q&A",
+    formula_index: "formula",
+    image_index: "image",
+    general_index: "general",
+  };
+  return labels[normalized] || normalized.replace(/_/g, " ");
+}
+
+function buildRunningAdminStatus(mode = "full") {
+  const isIncremental = mode === "incremental";
+  return {
+    tone: "medium",
+    mode,
+    title: isIncremental ? "Incremental reindex is running…" : "Knowledge base reindex is running…",
+    detail: isIncremental
+      ? "Scanning changed study files in the background and refreshing only the affected concept, summary, Q&A, formula, and image indexes. You can keep using the app normally."
+      : "Scanning the knowledge base in the background and rebuilding the concept, summary, Q&A, formula, and image indexes from scratch. You can keep using the app normally.",
+    stats: null,
+    currentFile: "",
+    processedFiles: [],
+    errors: [],
+  };
+}
+
+function isAdminReindexActive(payload) {
+  const reindex = payload?.reindex && typeof payload.reindex === "object" ? payload.reindex : null;
+  const progressState = String(reindex?.status || payload?.status || "").toLowerCase();
+  return Boolean(reindex?.running) || ["queued", "started", "running"].includes(progressState);
+}
+
+function buildLiveAdminStatus(payload, fallbackMode = "full") {
+  const reindex = payload?.reindex && typeof payload.reindex === "object" ? payload.reindex : null;
+  if (!reindex) {
+    return buildRunningAdminStatus(fallbackMode);
+  }
+
+  const progressState = String(reindex.status || payload?.status || "").toLowerCase();
+  if (["idle", "queued", "started"].includes(progressState)) {
+    return buildRunningAdminStatus(fallbackMode);
+  }
+
+  if (!isAdminReindexActive(payload)) {
+    return buildCompletedAdminStatus(payload, fallbackMode === "incremental" ? "Incremental reindex completed." : "Reindex completed.");
+  }
+
+  const progressPercent = Number(reindex.progress_percent || 0);
+  const indexTargets = Array.isArray(reindex.index_targets)
+    ? reindex.index_targets.map(formatIndexTargetLabel).filter(Boolean)
+    : [];
+  const currentFile = String(reindex.current_file || "").trim();
+  const phase = String(reindex.phase || "").trim();
+  const titleBase = fallbackMode === "incremental" ? "Incremental reindex is running…" : "Knowledge base reindex is running…";
+  const detailParts = [];
+  if (phase) detailParts.push(phase.endsWith(".") ? phase : `${phase}.`);
+  if (currentFile) detailParts.push(`Current file: ${currentFile}.`);
+  if (indexTargets.length) detailParts.push(`Refreshing ${indexTargets.join(", ")} indexes.`);
+
+  return {
+    tone: "medium",
+    mode: fallbackMode,
+    title: `${titleBase} ${progressPercent}%`,
+    detail: detailParts.join(" ").trim() || titleBase,
+    stats: {
+      scanned: Number(reindex.scanned_files || 0),
+      total: Number(reindex.total_files || 0),
+      reindexed: Number(reindex.reindexed_files || 0),
+      skipped: Number(reindex.skipped_files || 0),
+      removed: Number(reindex.removed_files || 0),
+    },
+    currentFile,
+    processedFiles: Array.isArray(reindex.processed_files) ? reindex.processed_files.slice(-6) : [],
+    errors: Array.isArray(reindex.errors) ? reindex.errors.filter(Boolean) : [],
+  };
+}
+
+function buildCompletedAdminStatus(payload, fallbackTitle = "Reindex completed.") {
+  const reindex = payload?.reindex && typeof payload.reindex === "object" ? payload.reindex : null;
+  const rawTitle = String(payload?.status || "").trim();
+  const title = rawTitle && !["idle", "running", "completed", "error"].includes(rawTitle.toLowerCase())
+    ? rawTitle
+    : (fallbackTitle || "Reindex completed.");
+
+  if (!reindex) {
+    return {
+      tone: "neutral",
+      title,
+      detail: "The indexing request finished and the latest knowledge-base state is now available.",
+      stats: null,
+      processedFiles: [],
+      errors: [],
+    };
+  }
+
+  const indexTargets = Array.isArray(reindex.index_targets)
+    ? reindex.index_targets.map(formatIndexTargetLabel).filter(Boolean)
+    : [];
+  const processedFiles = Array.isArray(reindex.processed_files) ? reindex.processed_files.filter(Boolean) : [];
+  const skippedPaths = Array.isArray(reindex.skipped_paths) ? reindex.skipped_paths.filter(Boolean) : [];
+  const removedPaths = Array.isArray(reindex.removed_paths) ? reindex.removed_paths.filter(Boolean) : [];
+  const errors = Array.isArray(reindex.errors) ? reindex.errors.filter(Boolean) : [];
+  const modeLabel = String(reindex.mode || "reindex").replace(/^[a-z]/, (char) => char.toUpperCase());
+  const detail = `${modeLabel} scan finished. Scanned ${reindex.scanned_files ?? 0} file(s), reindexed ${reindex.reindexed_files ?? 0}, skipped ${reindex.skipped_files ?? 0}, and removed ${reindex.removed_files ?? 0}.${indexTargets.length ? ` Refreshed ${indexTargets.join(", ")} indexes.` : ""}`;
+
+  return {
+    tone: errors.length ? "high" : "neutral",
+    mode: reindex.mode || "full",
+    title,
+    detail,
+    stats: {
+      scanned: Number(reindex.scanned_files || 0),
+      total: Number(reindex.total_files || 0),
+      reindexed: Number(reindex.reindexed_files || 0),
+      skipped: Number(reindex.skipped_files || 0),
+      removed: Number(reindex.removed_files || 0),
+    },
+    currentFile: "",
+    processedFiles: processedFiles.length ? processedFiles.slice(0, 6) : [...skippedPaths, ...removedPaths].slice(0, 6),
+    errors,
+  };
+}
+
+function buildFailedAdminStatus(actionLabel, detailText) {
+  return {
+    tone: "high",
+    title: `${actionLabel} failed.`,
+    detail: detailText || "The request could not finish. Please check the backend logs and try again.",
+    stats: null,
+    processedFiles: [],
+    errors: detailText ? [detailText] : [],
+  };
+}
+
+const LEARNING_CONTEXT_STORAGE_KEY = "learning_context_v1";
+const CONTEXT_REQUIRED_TABS = ["lesson", "quiz", "flashcards"];
+
+function readStoredLearningContext() {
+  try {
+    const raw = localStorage.getItem(LEARNING_CONTEXT_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeStoredLearningContext(context) {
+  try {
+    localStorage.setItem(LEARNING_CONTEXT_STORAGE_KEY, JSON.stringify(context || {}));
+  } catch {
+    // Ignore localStorage quota/runtime failures.
+  }
+}
+
+function buildFriendlyProcessingState(statusItem) {
+  const normalizedStatus = String(statusItem?.upload_status || "").trim().toUpperCase();
+  const normalizedReason = String(statusItem?.status_reason || "").trim().toLowerCase();
+
+  if (statusItem?.indexed || normalizedStatus === "INDEXED") {
+    return {
+      progress: 100,
+      title: "Your content is ready.",
+      detail: "You can now use it across chat and study tools.",
+      tone: "success",
+      ready: true,
+    };
+  }
+
+  if (normalizedStatus === "FAILED" || normalizedReason.includes("fail")) {
+    return {
+      progress: 78,
+      title: "We are fixing your content. It will be ready soon.",
+      detail: "You can continue using the app while we retry in the background.",
+      tone: "warning",
+      ready: false,
+    };
+  }
+
+  return {
+    progress: normalizedStatus === "UPLOADED" ? 38 : 64,
+    title: "Preparing your content...",
+    detail: "This will be ready shortly. You can continue using the app.",
+    tone: "info",
+    ready: false,
+  };
+}
+
 export default function ChatPanel({ initialActiveTab = null, externalTabRequest = null }) {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState([]);
@@ -305,12 +495,22 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
   const [contents, setContents] = useState([]);
   const [uploadedFiles, setUploadedFiles] = useState([]);
   const [selectedContent, setSelectedContent] = useState(null);
+  const [contextMode, setContextMode] = useState(() => readStoredLearningContext().mode || null);
+  const [isContextModalOpen, setIsContextModalOpen] = useState(false);
+  const [contextPrompt, setContextPrompt] = useState("");
+  const [contextHydrated, setContextHydrated] = useState(false);
+  const [hasPromptedForContext, setHasPromptedForContext] = useState(false);
+  const [contextDropActive, setContextDropActive] = useState(false);
+  const [contextProcessing, setContextProcessing] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadNotice, setUploadNotice] = useState(null);
   const [pdfBlobUrl, setPdfBlobUrl] = useState(null);
   const [drawerOpen, setDrawerOpen] = useState(true);
   const [adminRunning, setAdminRunning] = useState(false);
   const [adminMessage, setAdminMessage] = useState("");
+  const [adminStatus, setAdminStatus] = useState(null);
+  const [adminActionMode, setAdminActionMode] = useState("full");
+  const [adminJobId, setAdminJobId] = useState(null);
   const initialWorkspaceTab = initialActiveTab || (userRole === "admin" ? "admin" : userRole === "teacher" || userRole === "parent" ? "roles" : "chat");
   const [activeTab, setActiveTab] = useState(initialWorkspaceTab);
   const [lessonResultReady, setLessonResultReady] = useState(false);
@@ -386,6 +586,7 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
   const autoSpeakRef = useRef(autoSpeak);
   const activeStreamSessionRef = useRef(null);
   const pendingResponseRef = useRef(false);
+  const contextRetryFileIdsRef = useRef(new Set());
   const isAdmin = userRole === "admin";
   const isTeacherView = effectiveUserRole === "teacher";
   const isParentView = effectiveUserRole === "parent";
@@ -408,6 +609,15 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
           ? "Admin, billing, and oversight tools"
           : "AI-powered learning workspace";
   const shouldShowContextBar = ["chat", "lesson", "quiz", "flashcards", "assessment"].includes(activeTab);
+  const isExplorerMode = contextMode === "explorer";
+  const hasRequiredStudyContext = Boolean(selectedClass && selectedSubject);
+  const requiresStructuredContext = CONTEXT_REQUIRED_TABS.includes(activeTab);
+  const hasStructuredPrefill = !isExplorerMode && (
+    (activeTab === "lesson" && Boolean(planActionPrefill.lesson.chapter || planActionPrefill.lesson.context || selectedContent)) ||
+    (activeTab === "quiz" && Boolean(planActionPrefill.quiz.chapter || planActionPrefill.quiz.context || selectedContent)) ||
+    (activeTab === "flashcards" && Boolean(selectedContent || selectedFolder))
+  );
+  const shouldGateStructuredWorkspace = requiresStructuredContext && (isExplorerMode || (!hasRequiredStudyContext && !hasStructuredPrefill));
   const panelMeta = useMemo(() => getActivePanelMeta(activeTab, effectiveUserRole), [activeTab, effectiveUserRole]);
   const workspaceEyebrow = effectiveUserRole === "teacher"
     ? "Teaching workspace"
@@ -431,8 +641,21 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
   const planUsageSummary = planSummary
     ? `${planSummary.planCode}${planSummary.isTrial ? " Trial" : ""} · ${planAskLimit > 0 ? `${planAskRemaining} asks left` : `${planAskUsed} asks used`}`
     : "";
+  const contextPillItems = isExplorerMode
+    ? []
+    : [
+        { key: "class", icon: FiLayers, label: "Class", value: selectedClass },
+        { key: "subject", icon: FiBook, label: "Subject", value: selectedSubject },
+        { key: "folder", icon: FiFolder, label: "Folder", value: selectedFolder },
+        { key: "file", icon: FiFileText, label: "File", value: selectedContentItem?.title },
+      ].filter((item) => Boolean(item.value));
 
   const handleWorkspaceTabSelect = useCallback((tabId) => {
+    if (CONTEXT_REQUIRED_TABS.includes(tabId) && (!selectedClass || !selectedSubject || contextMode === "explorer")) {
+      setContextPrompt("Please select your class and subject to continue");
+      setIsContextModalOpen(true);
+    }
+
     if (tabId === "lesson") {
       setActiveTab("lesson");
       setLessonResultReady(false);
@@ -449,7 +672,7 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
       return;
     }
     setActiveTab(tabId);
-  }, []);
+  }, [contextMode, selectedClass, selectedSubject]);
 
   const shouldShowWorkspaceReadyDot = useCallback((tabId) => {
     if (tabId === "lesson") return lessonResultReady && activeTab !== "lesson";
@@ -795,17 +1018,29 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
     loadContents,
   });
 
-  const handleUploadFile = async (event) => {
-    const file = event.target.files?.[0];
+  const uploadSelectedFile = async (file, resetInput = () => {}) => {
     if (!file) return;
 
-    if (!selectedClass || !selectedSubject || !selectedFolder) {
+    if (uploadLimitState.blocked) {
+      setUploadNotice({
+        level: "WARN",
+        messageId: "MSG-1201",
+        text: `Upload limit reached (${uploadLimitState.used}/${uploadLimitState.limit}). Upgrade plan to continue.`,
+      });
+      setContextProcessing(null);
+      resetInput();
+      return;
+    }
+
+    if (!selectedClass || !selectedSubject) {
       setUploadNotice({
         level: "ERROR",
         messageId: "MSG-1303",
-        text: "Select class, subject, and folder before uploading a PDF.",
+        text: "Please choose your class and subject before adding a file.",
       });
-      event.target.value = "";
+      setContextPrompt("Please select your class and subject to continue");
+      setIsContextModalOpen(true);
+      resetInput();
       return;
     }
 
@@ -816,20 +1051,33 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
         messageId: "MSG-1304",
         text: "Only PDF files are supported.",
       });
-      event.target.value = "";
+      resetInput();
       return;
     }
 
+    const uploadFolder = selectedFolder || "Notes";
     const displayName = file.name.replace(/\.pdf$/i, "").trim() || file.name;
     const formData = new FormData();
     formData.append("class_name", selectedClass);
     formData.append("subject_name", selectedSubject);
-    formData.append("folder_name", selectedFolder);
+    formData.append("folder_name", uploadFolder);
     formData.append("display_name", displayName);
     formData.append("upload", file);
 
     setIsUploading(true);
-    setUploadNotice(null);
+    setUploadNotice({
+      level: "INFO",
+      messageId: "MSG-1301",
+      text: "Preparing your content... This will be ready shortly. You can continue using the app.",
+    });
+    setContextProcessing({
+      fileId: null,
+      progress: 18,
+      title: "Preparing your content...",
+      detail: "This will be ready shortly. You can continue using the app.",
+      tone: "info",
+      ready: false,
+    });
 
     try {
       const res = await apiFetch("/files/upload", {
@@ -849,18 +1097,29 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
           messageId: detail?.message_id || data?.message?.message_id || "MSG-1304",
           text: message,
         });
+        setContextProcessing(null);
         return;
       }
 
+      if (!selectedFolder) {
+        setSelectedFolder(uploadFolder);
+      }
+      setContextMode((prev) => prev || "contextual");
       setUploadNotice({
-        level: data?.message?.level || "INFO",
+        level: "INFO",
         messageId: data?.message?.message_id || "MSG-1301",
-        text:
-          data?.message?.user_text ||
-          "Upload accepted. Indexing is running in the background. The file becomes selectable after indexing.",
+        text: "Preparing your content... This will be ready shortly. You can continue using the app.",
+      });
+      setContextProcessing({
+        fileId: data?.file_id || null,
+        progress: 30,
+        title: "Preparing your content...",
+        detail: "This will be ready shortly. You can continue using the app.",
+        tone: "info",
+        ready: false,
       });
 
-      await loadContents(selectedClass, selectedSubject, selectedFolder);
+      await loadContents(selectedClass, selectedSubject, uploadFolder);
     } catch (err) {
       console.error("❌ Upload failed:", err);
       setUploadNotice({
@@ -868,10 +1127,18 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
         messageId: "MSG-1304",
         text: "Upload failed. Please try again.",
       });
+      setContextProcessing(null);
     } finally {
       setIsUploading(false);
-      event.target.value = "";
+      resetInput();
     }
+  };
+
+  const handleUploadFile = async (event) => {
+    const file = event.target.files?.[0];
+    await uploadSelectedFile(file, () => {
+      event.target.value = "";
+    });
   };
 
   const refreshIndexedFiles = async () => {
@@ -897,6 +1164,9 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
     selectedFolder,
     pendingUploadsInScope,
   });
+  const supplementalContextStatus = !contextProcessing && !uploadNotice && kbStatusMessage && kbStatusMessage !== "Knowledge base loaded."
+    ? kbStatusMessage
+    : "";
 
   const handleContentChange = (event) => {
     const value = event.target.value || null;
@@ -918,6 +1188,92 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
       setIsViewerMaximized(false);
     }
   };
+
+  const applyPersistedContext = useCallback(async (nextContext = {}) => {
+    const nextMode = String(nextContext?.mode || "contextual").toLowerCase() === "explorer" ? "explorer" : "contextual";
+    const nextClass = nextContext?.class_name || null;
+    const nextSubject = nextContext?.subject_name || null;
+    const nextFolder = nextContext?.folder_name || null;
+    const nextContent = nextContext?.content_id || null;
+
+    setContextMode(nextMode);
+    setSelectedClass(nextClass);
+    setSelectedSubject(nextSubject);
+    setSelectedFolder(nextFolder);
+    setSelectedContent(nextContent);
+
+    if (nextClass) {
+      await loadSubjects(nextClass);
+    }
+    if (nextClass && nextSubject) {
+      await loadFolders(nextClass, nextSubject);
+    }
+    if (nextClass && nextSubject && nextFolder) {
+      await loadContents(nextClass, nextSubject, nextFolder);
+    }
+  }, [loadContents, loadFolders, loadSubjects]);
+
+  const openContextModal = useCallback((promptText = "Please select your class and subject to continue") => {
+    setContextPrompt(promptText);
+    setIsContextModalOpen(true);
+    if (classes.length === 0) {
+      loadClasses();
+    }
+    if (selectedClass && subjects.length === 0) {
+      loadSubjects(selectedClass);
+    }
+    if (selectedClass && selectedSubject && folders.length === 0) {
+      loadFolders(selectedClass, selectedSubject);
+    }
+  }, [classes.length, folders.length, loadClasses, loadFolders, loadSubjects, selectedClass, selectedSubject, subjects.length]);
+
+  const saveLearningContext = useCallback(async () => {
+    if (!selectedClass || !selectedSubject) {
+      setContextPrompt("Please select your class and subject to continue");
+      return;
+    }
+    setContextMode("contextual");
+    if (selectedClass && selectedSubject && selectedFolder) {
+      await loadContents(selectedClass, selectedSubject, selectedFolder);
+    }
+    setContextPrompt("");
+    setIsContextModalOpen(false);
+  }, [loadContents, selectedClass, selectedFolder, selectedSubject]);
+
+  const handleExplorerModeSelection = useCallback(() => {
+    setContextMode("explorer");
+    setContextPrompt("");
+    setSelectedContent(null);
+    setIsViewerVisible(false);
+    setIsContextModalOpen(false);
+    setActiveTab("chat");
+  }, [setIsViewerVisible]);
+
+  const handleContextDrop = useCallback(async (event) => {
+    event.preventDefault();
+    setContextDropActive(false);
+    const file = event.dataTransfer?.files?.[0];
+    await uploadSelectedFile(file);
+  }, [uploadSelectedFile]);
+
+  const renderContextGate = useCallback((tabLabel) => (
+    <div className="context-required-gate" role="status" aria-live="polite">
+      <div className="workspace-panel__eyebrow">
+        <FiBookOpen />
+        <span>{tabLabel}</span>
+      </div>
+      <h3>Choose a learning context for {tabLabel}</h3>
+      <p>
+        {isExplorerMode
+          ? "Explorer Mode keeps chat open for general learning only. Choose a class and subject to unlock guided lessons, quizzes, and file-based study tools."
+          : "Pick your class and subject to unlock guided lessons, quizzes, flashcards, and content-based study support."}
+      </p>
+      <button type="button" className="primary-button" onClick={() => openContextModal("Please select your class and subject to continue")}>
+        <FiEdit />
+        <span>Choose learning context</span>
+      </button>
+    </div>
+  ), [isExplorerMode, openContextModal]);
 
   const toggleSubscriptionClass = useCallback((className) => {
     setSelectedSubscriptionClasses((prev) => {
@@ -1139,6 +1495,7 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
     input,
     sessionId,
     selectedContent,
+    chatTask: isExplorerMode ? "explorer" : null,
     setMessages,
     setCurrentStream,
     setWsError,
@@ -1158,34 +1515,95 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
   });
 
   const handleReindex = async () => {
+    const runningStatus = buildRunningAdminStatus("full");
+    setAdminActionMode("full");
     setAdminRunning(true);
-    setAdminMessage("Reindexing knowledge base...");
+    setAdminStatus(runningStatus);
+    setAdminMessage(runningStatus.title);
     try {
-      const res = await apiFetch("/admin/reindex", { method: "POST" });
+      const res = await apiFetch("/admin/reindex/full", { method: "POST" });
+      if (!res.ok) {
+        throw new Error(await parseApiError(res, "Reindex failed."));
+      }
       const data = await res.json();
       const meta = getEnvelopeMessage(data);
-      setAdminMessage(meta ? messageSummary(meta) : data.status || "Reindex completed.");
-    } catch {
-      setAdminMessage("Reindex failed.");
-    } finally {
+      setAdminJobId(data?.job_id || data?.reindex?.job_id || null);
+      const nextStatus = buildLiveAdminStatus(data, "full");
+      setAdminStatus(nextStatus);
+      setAdminMessage(meta ? `${messageSummary(meta)} ${nextStatus.detail || nextStatus.title}` : (nextStatus.detail || nextStatus.title));
+      if (!isAdminReindexActive(data)) {
+        setAdminRunning(false);
+      }
+    } catch (err) {
+      const failureStatus = buildFailedAdminStatus("Knowledge base reindex", String(err?.message || "Reindex failed."));
+      setAdminStatus(failureStatus);
+      setAdminMessage(failureStatus.title);
       setAdminRunning(false);
+      setAdminJobId(null);
     }
   };
 
   const handleIncrementalReindex = async () => {
+    const runningStatus = buildRunningAdminStatus("incremental");
+    setAdminActionMode("incremental");
     setAdminRunning(true);
-    setAdminMessage("Incremental reindexing...");
+    setAdminStatus(runningStatus);
+    setAdminMessage(runningStatus.title);
     try {
-      const res = await apiFetch("/admin/reindex-incremental", { method: "POST" });
+      const res = await apiFetch("/admin/reindex/incremental", { method: "POST" });
+      if (!res.ok) {
+        throw new Error(await parseApiError(res, "Incremental reindex failed."));
+      }
       const data = await res.json();
       const meta = getEnvelopeMessage(data);
-      setAdminMessage(meta ? messageSummary(meta) : data.status || "Incremental reindex completed.");
-    } catch {
-      setAdminMessage("Incremental reindex failed.");
-    } finally {
+      setAdminJobId(data?.job_id || data?.reindex?.job_id || null);
+      const nextStatus = buildLiveAdminStatus(data, "incremental");
+      setAdminStatus(nextStatus);
+      setAdminMessage(meta ? `${messageSummary(meta)} ${nextStatus.detail || nextStatus.title}` : (nextStatus.detail || nextStatus.title));
+      if (!isAdminReindexActive(data)) {
+        setAdminRunning(false);
+      }
+    } catch (err) {
+      const failureStatus = buildFailedAdminStatus("Incremental reindex", String(err?.message || "Incremental reindex failed."));
+      setAdminStatus(failureStatus);
+      setAdminMessage(failureStatus.title);
       setAdminRunning(false);
+      setAdminJobId(null);
     }
   };
+
+  useEffect(() => {
+    if (!adminRunning) return undefined;
+
+    let cancelled = false;
+    const pollStatus = async () => {
+      try {
+        const statusUrl = adminJobId ? `/admin/reindex/status/${encodeURIComponent(adminJobId)}` : "/admin/reindex-status";
+        const res = await apiFetch(statusUrl, { method: "GET" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        const liveStatus = buildLiveAdminStatus(data, adminActionMode);
+        setAdminStatus(liveStatus);
+        if (liveStatus?.title) {
+          setAdminMessage(liveStatus.title);
+        }
+        if (!isAdminReindexActive(data)) {
+          setAdminRunning(false);
+          setAdminJobId(null);
+        }
+      } catch {
+        // Keep the last visible status if polling fails temporarily.
+      }
+    };
+
+    pollStatus();
+    const intervalId = window.setInterval(pollStatus, 1200);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [adminRunning, adminActionMode, adminJobId]);
 
   useEffect(() => {
     loadSessions();
@@ -1201,6 +1619,133 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
       loadClasses();
     }
   }, [classes.length, loadClasses]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const localContext = readStoredLearningContext();
+    const hasLocalContext = Boolean(
+      localContext?.mode ||
+      localContext?.class_name ||
+      localContext?.subject_name ||
+      localContext?.folder_name ||
+      localContext?.content_id
+    );
+
+    if (hasLocalContext) {
+      applyPersistedContext(localContext).catch(() => {
+        // Keep bootstrapping even if local restoration is partial.
+      });
+    }
+
+    const loadSavedContext = async () => {
+      try {
+        const res = await apiFetch("/context", { skipSessionExpiredEvent: true });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        const hasSavedContext = Boolean(
+          data?.mode === "explorer" ||
+          data?.class_name ||
+          data?.subject_name ||
+          data?.folder_name ||
+          data?.content_id
+        );
+        if (hasSavedContext) {
+          writeStoredLearningContext(data);
+          await applyPersistedContext(data);
+        }
+      } catch {
+        // Local storage fallback is enough if the session endpoint is unavailable.
+      } finally {
+        if (!cancelled) {
+          setContextHydrated(true);
+        }
+      }
+    };
+
+    loadSavedContext();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiFetch, applyPersistedContext]);
+
+  useEffect(() => {
+    if (!contextHydrated || !contextMode) return;
+    const payload = {
+      mode: contextMode === "explorer" ? "explorer" : "contextual",
+      class_name: selectedClass || null,
+      subject_name: selectedSubject || null,
+      folder_name: selectedFolder || null,
+      content_id: selectedContent || null,
+    };
+    writeStoredLearningContext(payload);
+    apiFetch("/context", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).catch(() => {
+      // Local storage persistence is still available offline or during transient backend failures.
+    });
+  }, [apiFetch, contextHydrated, contextMode, selectedClass, selectedContent, selectedFolder, selectedSubject]);
+
+  useEffect(() => {
+    if (hasPromptedForContext || !contextHydrated || effectiveUserRole !== "student") return;
+    const hasSavedChoice = contextMode === "explorer" || Boolean(selectedClass && selectedSubject);
+    if (!hasSavedChoice) {
+      setContextPrompt("Choose your class and subject to personalize the workspace, or continue in Explorer Mode.");
+      setIsContextModalOpen(true);
+    }
+    setHasPromptedForContext(true);
+  }, [contextHydrated, contextMode, effectiveUserRole, hasPromptedForContext, selectedClass, selectedSubject]);
+
+  useEffect(() => {
+    if (!shouldGateStructuredWorkspace) return;
+    setContextPrompt("Please select your class and subject to continue");
+    setIsContextModalOpen(true);
+  }, [shouldGateStructuredWorkspace]);
+
+  useEffect(() => {
+    if (!contextProcessing?.fileId) return undefined;
+
+    let cancelled = false;
+    const pollProcessing = async () => {
+      try {
+        const res = await apiFetch(`/files/index-status?file_id=${encodeURIComponent(contextProcessing.fileId)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        const item = Array.isArray(data?.items) ? data.items[0] : null;
+        if (!item) return;
+
+        const friendly = buildFriendlyProcessingState(item);
+        setContextProcessing({ fileId: item.file_id, ...friendly });
+
+        const needsRetry = !friendly.ready && String(item?.upload_status || "").toUpperCase() === "FAILED";
+        if (needsRetry && !contextRetryFileIdsRef.current.has(item.file_id)) {
+          contextRetryFileIdsRef.current.add(item.file_id);
+          const retryBody = new FormData();
+          retryBody.append("scope", "file");
+          retryBody.append("file_id", String(item.file_id));
+          apiFetch("/files/reindex", { method: "POST", body: retryBody }).catch(() => {
+            contextRetryFileIdsRef.current.delete(item.file_id);
+          });
+        }
+
+        if (friendly.ready && selectedClass && selectedSubject) {
+          await loadContents(selectedClass, selectedSubject, selectedFolder || "Notes");
+        }
+      } catch {
+        // Keep the last visible friendly status if polling fails temporarily.
+      }
+    };
+
+    pollProcessing();
+    const intervalId = window.setInterval(pollProcessing, 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [apiFetch, contextProcessing?.fileId, loadContents, selectedClass, selectedFolder, selectedSubject]);
 
   useEffect(() => {
     if (sessionId) {
@@ -1307,11 +1852,19 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
     return (
       <div className="empty-state empty-state--chat">
         <FiMessageSquare />
-        <h4>{selectedContent ? `Ask about ${linkedContextName}` : "Start a focused study conversation"}</h4>
+        <h4>
+          {isExplorerMode
+            ? "Explore a topic with general learning help"
+            : selectedContent
+              ? `Ask about ${linkedContextName}`
+              : "Start a focused study conversation"}
+        </h4>
         <p>
-          {selectedContent
-            ? `The chat is linked to ${linkedContextName}. Ask for explanations, summaries, or problem-solving help based on this material.`
-            : "Select content from the knowledge base, then ask for explanations, summaries, or problem-solving help in a clean, distraction-free workspace."}
+          {isExplorerMode
+            ? "Explorer Mode is open for broad educational questions. Choose a class and subject any time to unlock guided lessons, quizzes, flashcards, and file-based help."
+            : selectedContent
+              ? `The chat is linked to ${linkedContextName}. Ask for explanations, summaries, or problem-solving help based on this material.`
+              : "Select content from the knowledge base, then ask for explanations, summaries, or problem-solving help in a clean, distraction-free workspace."}
         </p>
       </div>
     );
@@ -1730,172 +2283,104 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
                 <span>Content linked</span>
               </span>
             )}
-            {(selectedContent || hasViewerContent) && (
-              <div className="viewer-controls">
-                <button
-                  type="button"
-                  className="icon-button icon-button--ghost"
-                  onClick={() => setIsViewerVisible((prev) => !prev)}
-                  disabled={!selectedContent}
-                  title={isViewerVisible ? "Hide viewer" : "Show viewer"}
-                >
-                  {isViewerVisible ? <FiEyeOff /> : <FiEye />}
-                  <span>{isViewerVisible ? "Hide Viewer" : "Show Viewer"}</span>
-                </button>
-                <button
-                  type="button"
-                  className="icon-button icon-button--ghost"
-                  onClick={toggleViewerMaximize}
-                  disabled={!shouldShowViewer}
-                  title={isViewerMaximized ? "Exit popup" : "Open popup"}
-                >
-                  {isViewerMaximized ? <FiMinimize2 /> : <FiMaximize2 />}
-                  <span>{isViewerMaximized ? "Exit Popup" : "Popup"}</span>
-                </button>
-                <button
-                  type="button"
-                  className="icon-button icon-button--ghost"
-                  onClick={openViewerInNewTab}
-                  disabled={!shouldShowViewer}
-                  title="Open viewer in a new tab"
-                >
-                  <FiExternalLink />
-                  <span>Open New</span>
-                </button>
-              </div>
-            )}
           </div>
         </div>
 
+        {isExplorerMode && (
+          <div className="workspace-mode-banner" role="status" aria-live="polite">
+            <FiGlobe />
+            <span>Explorer Mode · choose a class to unlock guided study tools</span>
+          </div>
+        )}
+
         {shouldShowContextBar && (
           <div className="workspace-context-bar">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,application/pdf"
+              onChange={handleUploadFile}
+              style={{ display: "none" }}
+            />
+
             <div className="workspace-context-status" role="status" aria-live="polite">
               <div className="workspace-context-status-row">
-                <div className="workspace-context-status-text">
-                  {uploadNotice ? (
-                    <span className={`status-inline status-inline--${String(uploadNotice.level || "INFO").toLowerCase()}`}>
-                      <strong>{uploadNotice.level || "INFO"}</strong>
-                      <span>{uploadNotice.messageId || "MSG-1000"}</span>
-                      <span>{uploadNotice.text}</span>
-                    </span>
+                <div className="workspace-context-summary" aria-label="Selected learning context">
+                  {isExplorerMode ? (
+                    <span className="status-pill status-pill--accent workspace-context-pill">General learning only</span>
                   ) : (
-                    kbStatusMessage
+                    <>
+                      {contextPillItems.length > 0 && (
+                        <span className="workspace-context-summary__label">Current Context</span>
+                      )}
+                      {contextPillItems.map(({ key, icon: Icon, label, value }) => (
+                        <span key={key} className="status-pill status-pill--accent workspace-context-pill" title={`${label}: ${value}`}>
+                          <Icon />
+                          <span className="workspace-context-pill__text">{value}</span>
+                        </span>
+                      ))}
+                    </>
+                  )}
+
+                  {(selectedContent || hasViewerContent) && (
+                    <button
+                      type="button"
+                      className="status-pill status-pill--button workspace-context-pill"
+                      onClick={() => setIsViewerVisible((prev) => !prev)}
+                      disabled={!selectedContent}
+                      title={isViewerVisible ? "Hide document" : "Show document"}
+                      aria-label={isViewerVisible ? "Hide document" : "Show document"}
+                    >
+                      {isViewerVisible ? <FiEyeOff /> : <FiEye />}
+                      <span>{isViewerVisible ? "Hide Document" : "Show Document"}</span>
+                    </button>
                   )}
                 </div>
+
+                <div className="workspace-context-actions workspace-context-actions--selectors-row">
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => openContextModal("Choose your class and subject to personalize the workspace.")}
+                  >
+                    <FiEdit />
+                    <span>Edit Context</span>
+                  </button>
+                </div>
               </div>
+
+              {contextProcessing ? (
+                <div className="workspace-context-status-text">
+                  <div className={`context-processing context-processing--${contextProcessing.tone || "info"}`}>
+                    <strong>{contextProcessing.title}</strong>
+                    <span>{contextProcessing.detail}</span>
+                    <div className="context-processing__bar" aria-hidden="true">
+                      <span style={{ width: `${Math.max(0, Math.min(100, Number(contextProcessing.progress || 0)))}%` }} />
+                    </div>
+                  </div>
+                </div>
+              ) : uploadNotice ? (
+                <div className="workspace-context-status-text">
+                  <span className={`status-inline status-inline--${String(uploadNotice.level || "INFO").toLowerCase()}`}>
+                    <strong>{uploadNotice.level || "INFO"}</strong>
+                    <span>{uploadNotice.messageId || "MSG-1000"}</span>
+                    <span>{uploadNotice.text}</span>
+                  </span>
+                </div>
+              ) : supplementalContextStatus ? (
+                <div className="workspace-context-status-text">
+                  <span>{supplementalContextStatus}</span>
+                </div>
+              ) : null}
 
               {uploadLimitState.blocked && (
                 <span className="sidebar-note">
                   Upload limit reached ({uploadLimitState.used}/{uploadLimitState.limit}). Upgrade plan to continue.
                 </span>
               )}
-              {planSummary && (
-                <span className="sidebar-note">{classAccessSummary}</span>
+              {!isExplorerMode && !hasRequiredStudyContext && (
+                <span className="sidebar-note">Please select your class and subject to continue</span>
               )}
-            </div>
-
-            <div className="workspace-select-wrap workspace-select-wrap--compact">
-              <FiLayers />
-              <select
-                value={selectedClass || ""}
-                onChange={handleClassChange}
-                onFocus={() => {
-                  if (classes.length === 0) loadClasses();
-                }}
-              >
-                <option value="">Class</option>
-                {visibleClasses.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="workspace-select-wrap workspace-select-wrap--compact">
-              <FiBook />
-              <select
-                value={selectedSubject || ""}
-                onChange={handleSubjectChange}
-                disabled={!selectedClass}
-              >
-                <option value="">Subject</option>
-                {subjects.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="workspace-select-wrap workspace-select-wrap--compact">
-              <FiFolder />
-              <select
-                value={selectedFolder || ""}
-                onChange={handleFolderChange}
-                disabled={!selectedSubject}
-              >
-                <option value="">Folder</option>
-                {folders.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="workspace-select-wrap workspace-select-wrap--compact">
-              <FiFileText />
-              <select
-                value={selectedContent || ""}
-                onChange={handleContentChange}
-                disabled={contents.length === 0}
-              >
-                <option value="">File</option>
-                {contents.map((item) => (
-                  <option key={item.content_id} value={item.content_id} disabled={item.selectable === false}>
-                    {item.selectable === false
-                      ? `${item.title} [${item.status_label || "Processing"}]`
-                      : item.title}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="workspace-context-actions workspace-context-actions--selectors-row">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".pdf,application/pdf"
-                onChange={handleUploadFile}
-                style={{ display: "none" }}
-              />
-
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={
-                  isUploading ||
-                  uploadLimitState.blocked ||
-                  !selectedClass ||
-                  !selectedSubject ||
-                  !selectedFolder
-                }
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <FiPlus />
-                <span>{isUploading ? "Uploading..." : "Upload PDF"}</span>
-              </button>
-
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={kbStatus.contentsLoading}
-                onClick={refreshIndexedFiles}
-              >
-                <FiRefreshCw />
-                <span>Refresh</span>
-              </button>
             </div>
           </div>
         )}
@@ -2011,45 +2496,58 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
                   onKeyDown={(e) => e.key === "Enter" && handleSend()}
                 />
               </div>
-              <div className="workspace-input__actions workspace-input__actions--row">
-                <VoiceControl onResult={handleVoice} />
-                <LanguagePicker onChange={setPreferredLanguage} compact={false} />
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={handleNewChat}
-                >
-                  <FiPlus />
-                  <span>New Chat Session</span>
-                </button>
-                <button
-                  type="button"
-                  className="icon-button"
-                  onClick={toggleAutoSpeak}
-                  title={autoSpeak ? "Auto speak on (Ctrl+Shift+S)" : "Auto speak off (Ctrl+Shift+S)"}
-                  aria-label={autoSpeak ? "Auto speak on (Ctrl+Shift+S)" : "Auto speak off (Ctrl+Shift+S)"}
-                >
-                  {autoSpeak ? <FiVolume2 /> : <FiVolumeX />}
-                  <span>{autoSpeak ? "Auto Speak On" : "Auto Speak Off"}</span>
-                </button>
-                <button type="button" className="primary-button" onClick={handleSend}>
-                  <FiSend />
-                  <span>Send</span>
-                </button>
-                {isStreaming && (
+              <div className="workspace-input__actions workspace-input__actions--row chat-composer-toolbar">
+                <div className="chat-composer-toolbar__group chat-composer-toolbar__group--left">
+                  <VoiceControl onResult={handleVoice} compact />
+                  <LanguagePicker onChange={setPreferredLanguage} compact={false} />
+                </div>
+
+                <div className="chat-composer-toolbar__group chat-composer-toolbar__group--right">
                   <button
                     type="button"
-                    className="secondary-button"
-                    onClick={() => {
-                      closeSocket();
-                      setIsStreaming(false);
-                      setCurrentStream("");
-                    }}
+                    className="icon-button chat-composer-tool"
+                    onClick={handleNewChat}
+                    title="New chat session"
+                    aria-label="New chat session"
                   >
-                    <FiSquare />
-                    <span>Stop</span>
+                    <FiPlus />
                   </button>
-                )}
+                  <button
+                    type="button"
+                    className={`icon-button chat-composer-tool ${autoSpeak ? "chat-composer-tool--active" : ""}`}
+                    onClick={toggleAutoSpeak}
+                    title={autoSpeak ? "Turn auto speak off (Ctrl+Shift+S)" : "Turn auto speak on (Ctrl+Shift+S)"}
+                    aria-label={autoSpeak ? "Turn auto speak off (Ctrl+Shift+S)" : "Turn auto speak on (Ctrl+Shift+S)"}
+                  >
+                    {autoSpeak ? <FiVolume2 /> : <FiVolumeX />}
+                  </button>
+                  {isStreaming && (
+                    <button
+                      type="button"
+                      className="secondary-button chat-composer-stop"
+                      onClick={() => {
+                        closeSocket();
+                        setIsStreaming(false);
+                        setCurrentStream("");
+                      }}
+                      title="Stop response"
+                      aria-label="Stop response"
+                    >
+                      <FiSquare />
+                      <span>Stop</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="primary-button chat-composer-send"
+                    onClick={handleSend}
+                    title="Send message"
+                    aria-label="Send message"
+                  >
+                    <FiSend />
+                    <span>Send</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -2057,76 +2555,85 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
           )}
 
           <div style={{ display: activeTab === "lesson" ? "flex" : "none", flex: 1, minHeight: 0 }}>
-            <LessonPanel
-              sessionId={sessionId}
-              lessonSessionId={lessonSessionId}
-              onLessonSessionChange={persistLessonSession}
-              onLessonSessionsChange={loadLessonSessions}
-              planSummary={planSummary}
-              defaultChapter={lessonDefaultChapter}
-              prefillContext={planActionPrefill.lesson.context}
-              autoRunToken={planActionPrefill.lesson.autoRunToken}
-              prefilledPlanData={planActionPrefill.lesson.generatedPayload}
-              currentContextLabel={currentContextLabel}
-              hasLinkedContent={Boolean(selectedContent)}
-              isContextViewerVisible={shouldShowViewer}
-              onOpenContext={() => setIsViewerVisible(true)}
-              onResultReady={() => activeTab !== "lesson" && setLessonResultReady(true)}
-            />
+            {shouldGateStructuredWorkspace ? renderContextGate("Lessons") : (
+              <LessonPanel
+                sessionId={sessionId}
+                lessonSessionId={lessonSessionId}
+                onLessonSessionChange={persistLessonSession}
+                onLessonSessionsChange={loadLessonSessions}
+                planSummary={planSummary}
+                defaultChapter={lessonDefaultChapter}
+                prefillContext={planActionPrefill.lesson.context}
+                autoRunToken={planActionPrefill.lesson.autoRunToken}
+                prefilledPlanData={planActionPrefill.lesson.generatedPayload}
+                currentContextLabel={currentContextLabel}
+                selectedContentId={selectedContent || null}
+                hasLinkedContent={Boolean(selectedContent)}
+                isContextViewerVisible={shouldShowViewer}
+                onOpenContext={() => setIsViewerVisible(true)}
+                onResultReady={() => activeTab !== "lesson" && setLessonResultReady(true)}
+              />
+            )}
           </div>
 
           <div style={{ display: activeTab === "quiz" ? "flex" : "none", flex: 1, minHeight: 0 }}>
-            <QuizPanel
-              sessionId={sessionId}
-              quizSessionId={quizSessionId}
-              onQuizSessionChange={persistQuizSession}
-              onQuizSessionsChange={loadQuizSessions}
-              planSummary={planSummary}
-              defaultChapter={quizDefaultChapter}
-              prefillContext={planActionPrefill.quiz.context}
-              autoRunToken={planActionPrefill.quiz.autoRunToken}
-              prefilledQuizData={planActionPrefill.quiz.generatedPayload}
-              chapterOptions={chapterOptions}
-              currentContextLabel={currentContextLabel}
-              hasLinkedContent={Boolean(selectedContent)}
-              isContextViewerVisible={shouldShowViewer}
-              onOpenContext={() => setIsViewerVisible(true)}
-              onResultReady={() => activeTab !== "quiz" && setQuizResultReady(true)}
-            />
+            {shouldGateStructuredWorkspace ? renderContextGate("Quiz") : (
+              <QuizPanel
+                sessionId={sessionId}
+                quizSessionId={quizSessionId}
+                onQuizSessionChange={persistQuizSession}
+                onQuizSessionsChange={loadQuizSessions}
+                planSummary={planSummary}
+                defaultChapter={quizDefaultChapter}
+                prefillContext={planActionPrefill.quiz.context}
+                autoRunToken={planActionPrefill.quiz.autoRunToken}
+                prefilledQuizData={planActionPrefill.quiz.generatedPayload}
+                chapterOptions={chapterOptions}
+                currentContextLabel={currentContextLabel}
+                hasLinkedContent={Boolean(selectedContent)}
+                isContextViewerVisible={shouldShowViewer}
+                onOpenContext={() => setIsViewerVisible(true)}
+                onResultReady={() => activeTab !== "quiz" && setQuizResultReady(true)}
+              />
+            )}
           </div>
 
           <div style={{ display: activeTab === "flashcards" ? "flex" : "none", flex: 1, minHeight: 0 }}>
-            <FlashcardPanel
-              sessionId={sessionId}
-              flashcardSessionId={flashcardSessionId}
-              onFlashcardSessionChange={persistFlashcardSession}
-              onFlashcardSessionsChange={loadFlashcardSessions}
-              planSummary={planSummary}
-              defaultChapter={inferredChapter}
-              selectedClass={selectedClass}
-              selectedSubject={selectedSubject}
-              selectedFolder={selectedFolder}
-              chapterOptions={chapterOptions}
-              currentContextLabel={currentContextLabel}
-              hasLinkedContent={Boolean(selectedContent)}
-              isContextViewerVisible={shouldShowViewer}
-              onOpenContext={() => setIsViewerVisible(true)}
-              onResultReady={() => activeTab !== "flashcards" && setFlashcardResultReady(true)}
-            />
+            {shouldGateStructuredWorkspace ? renderContextGate("Flashcards") : (
+              <FlashcardPanel
+                sessionId={sessionId}
+                flashcardSessionId={flashcardSessionId}
+                onFlashcardSessionChange={persistFlashcardSession}
+                onFlashcardSessionsChange={loadFlashcardSessions}
+                planSummary={planSummary}
+                defaultChapter={inferredChapter}
+                selectedClass={selectedClass}
+                selectedSubject={selectedSubject}
+                selectedFolder={selectedFolder}
+                chapterOptions={chapterOptions}
+                currentContextLabel={currentContextLabel}
+                hasLinkedContent={Boolean(selectedContent)}
+                isContextViewerVisible={shouldShowViewer}
+                onOpenContext={() => setIsViewerVisible(true)}
+                onResultReady={() => activeTab !== "flashcards" && setFlashcardResultReady(true)}
+              />
+            )}
           </div>
 
           <div style={{ display: activeTab === "assessment" ? "flex" : "none", flex: 1, minHeight: 0 }}>
-            <AssessmentPanel
-              planSummary={planSummary}
-              defaultSubject={selectedSubject || ""}
-              selectedClass={selectedClass || ""}
-              prefillSubject={planActionPrefill.assessment.subject}
-              prefillContext={planActionPrefill.assessment.context}
-              prefillQuizMode={planActionPrefill.assessment.mode}
-              prefillDifficulty={planActionPrefill.assessment.difficulty}
-              prefillNumQuestions={planActionPrefill.assessment.numQuestions}
-              autoRunToken={planActionPrefill.assessment.autoRunToken}
-            />
+            {shouldGateStructuredWorkspace ? renderContextGate("Assessment") : (
+              <AssessmentPanel
+                planSummary={planSummary}
+                defaultSubject={selectedSubject || ""}
+                selectedClass={selectedClass || ""}
+                prefillSubject={planActionPrefill.assessment.subject}
+                prefillContext={planActionPrefill.assessment.context}
+                prefillQuizMode={planActionPrefill.assessment.mode}
+                prefillDifficulty={planActionPrefill.assessment.difficulty}
+                prefillNumQuestions={planActionPrefill.assessment.numQuestions}
+                autoRunToken={planActionPrefill.assessment.autoRunToken}
+              />
+            )}
           </div>
 
           <div style={{ display: activeTab === "assignments" ? "flex" : "none", flex: 1, minHeight: 0 }}>
@@ -2153,6 +2660,7 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
               onAdminIncrementalReindex={handleIncrementalReindex}
               adminRunning={adminRunning}
               adminMessage={adminMessage}
+              adminStatus={adminStatus}
               isActive={activeTab === "admin"}
             />
           </div>
@@ -2208,15 +2716,37 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
                   </div>
                   <h3>Attached document</h3>
                 </div>
-                <button
-                  type="button"
-                  className="icon-button icon-button--ghost viewer-close-button"
-                  onClick={() => setIsViewerVisible(false)}
-                  title="Close source viewer"
-                  aria-label="Close source viewer"
-                >
-                  <FiX />
-                </button>
+                <div className="viewer-toolbar">
+                  <button
+                    type="button"
+                    className="icon-button icon-button--ghost viewer-close-button"
+                    onClick={toggleViewerMaximize}
+                    disabled={!shouldShowViewer}
+                    title={isViewerMaximized ? "Exit popup" : "Open popup"}
+                    aria-label={isViewerMaximized ? "Exit popup" : "Open popup"}
+                  >
+                    {isViewerMaximized ? <FiMinimize2 /> : <FiMaximize2 />}
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-button icon-button--ghost viewer-close-button"
+                    onClick={openViewerInNewTab}
+                    disabled={!shouldShowViewer}
+                    title="Open in new tab"
+                    aria-label="Open in new tab"
+                  >
+                    <FiExternalLink />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-button icon-button--ghost viewer-close-button"
+                    onClick={() => setIsViewerVisible(false)}
+                    title="Close source viewer"
+                    aria-label="Close source viewer"
+                  >
+                    <FiX />
+                  </button>
+                </div>
               </div>
               <iframe src={pdfBlobUrl} title="PDF Viewer" width="100%" height="100%" />
             </aside>
@@ -2235,10 +2765,10 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
                       type="button"
                       className="icon-button icon-button--ghost"
                       onClick={openViewerInNewTab}
-                      title="Open viewer in a new tab"
+                      title="Open in new tab"
                     >
                       <FiExternalLink />
-                      <span>Open New</span>
+                      <span>Open in New Tab</span>
                     </button>
                     <button
                       type="button"
@@ -2252,6 +2782,176 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
                   </div>
                 </div>
                 <iframe src={pdfBlobUrl} title="PDF Viewer Popup" width="100%" height="100%" />
+              </div>
+            </div>
+          )}
+
+          {isContextModalOpen && (
+            <div
+              className="context-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Choose learning context"
+              onClick={() => setIsContextModalOpen(false)}
+            >
+              <div className="context-modal__content" onClick={(event) => event.stopPropagation()}>
+                <div className="subscription-modal__header">
+                  <div>
+                    <div className="workspace-panel__eyebrow">
+                      <FiBookOpen />
+                      <span>Learning setup</span>
+                    </div>
+                    <h3>Choose your learning context</h3>
+                    <p>{contextPrompt || "Select your class and subject, or continue in Explorer Mode for general learning chat."}</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="icon-button icon-button--ghost"
+                    onClick={() => setIsContextModalOpen(false)}
+                    aria-label="Close learning setup"
+                  >
+                    <FiX />
+                  </button>
+                </div>
+
+                <div className="context-modal__grid">
+                  <section className="subscription-card context-modal__section">
+                    <h4>1. Pick your study area</h4>
+                    <div className="context-modal__field-list">
+                      <div className="workspace-select-wrap">
+                        <FiLayers />
+                        <select
+                          aria-label="Select class"
+                          value={selectedClass || ""}
+                          onChange={handleClassChange}
+                          onFocus={() => {
+                            if (classes.length === 0) loadClasses();
+                          }}
+                        >
+                          <option value="">Class</option>
+                          {visibleClasses.map((item) => (
+                            <option key={item} value={item}>
+                              {item}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="workspace-select-wrap">
+                        <FiBook />
+                        <select
+                          aria-label="Select subject"
+                          value={selectedSubject || ""}
+                          onChange={handleSubjectChange}
+                          disabled={!selectedClass}
+                        >
+                          <option value="">Subject</option>
+                          {subjects.map((item) => (
+                            <option key={item} value={item}>
+                              {item}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="workspace-select-wrap">
+                        <FiFolder />
+                        <select
+                          aria-label="Select folder"
+                          value={selectedFolder || ""}
+                          onChange={handleFolderChange}
+                          disabled={!selectedSubject}
+                        >
+                          <option value="">Folder</option>
+                          {folders.map((item) => (
+                            <option key={item} value={item}>
+                              {item}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="workspace-select-wrap">
+                        <FiFileText />
+                        <select
+                          aria-label="Select file"
+                          value={selectedContent || ""}
+                          onChange={handleContentChange}
+                          disabled={contents.length === 0}
+                        >
+                          <option value="">File</option>
+                          {contents.map((item) => (
+                            <option key={item.content_id} value={item.content_id} disabled={item.selectable === false}>
+                              {item.selectable === false
+                                ? `${item.title} [${item.status_label || "Processing"}]`
+                                : item.title}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <p className="sidebar-note">Class and subject are required for guided study tools. Folder and file are optional.</p>
+                    {planSummary && <p className="sidebar-note">{classAccessSummary}</p>}
+                  </section>
+
+                  <section className="subscription-card context-modal__section">
+                    <h4>2. Add your own notes</h4>
+                    <div
+                      className={`context-dropzone ${contextDropActive ? "is-active" : ""}`}
+                      onDragOver={(event) => {
+                        event.preventDefault();
+                        setContextDropActive(true);
+                      }}
+                      onDragLeave={() => setContextDropActive(false)}
+                      onDrop={handleContextDrop}
+                    >
+                      <FiArrowDown />
+                      <strong>Drag and drop a PDF here</strong>
+                      <span>
+                        We’ll save it to <strong>{selectedFolder || "Notes"}</strong>, prepare it in the background, and let you keep studying.
+                      </span>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={!selectedClass || !selectedSubject || isUploading || uploadLimitState.blocked}
+                      >
+                        <FiPlus />
+                        <span>{isUploading ? "Uploading..." : "Choose PDF"}</span>
+                      </button>
+                      {uploadLimitState.blocked ? (
+                        <span className="sidebar-note">
+                          Upload limit reached ({uploadLimitState.used}/{uploadLimitState.limit}). Upgrade plan to continue.
+                        </span>
+                      ) : null}
+                    </div>
+
+                    <div className="context-modal__actions">
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={refreshIndexedFiles}
+                        disabled={!selectedClass || !selectedSubject || kbStatus.contentsLoading}
+                      >
+                        <FiRefreshCw />
+                        <span>Refresh files</span>
+                      </button>
+                      <button type="button" className="secondary-button" onClick={handleExplorerModeSelection}>
+                        <FiGlobe />
+                        <span>Proceed in Explorer Mode</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="primary-button"
+                        onClick={saveLearningContext}
+                        disabled={!selectedClass || !selectedSubject}
+                      >
+                        <FiCheck />
+                        <span>Continue with this context</span>
+                      </button>
+                    </div>
+                  </section>
+                </div>
               </div>
             </div>
           )}

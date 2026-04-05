@@ -375,6 +375,12 @@ def init_db():
         CREATE TABLE IF NOT EXISTS user_preferences (
             user_id TEXT PRIMARY KEY,
             preferred_language TEXT NOT NULL DEFAULT 'en',
+            reminder_settings TEXT DEFAULT '{}',
+            context_mode TEXT DEFAULT 'contextual',
+            class_name TEXT,
+            subject_name TEXT,
+            folder_name TEXT,
+            content_id TEXT,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         """,
@@ -1091,6 +1097,11 @@ def migrate_preferences_schema():
             user_id TEXT PRIMARY KEY,
             preferred_language TEXT NOT NULL DEFAULT 'en',
             reminder_settings TEXT DEFAULT '{}',
+            context_mode TEXT DEFAULT 'contextual',
+            class_name TEXT,
+            subject_name TEXT,
+            folder_name TEXT,
+            content_id TEXT,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         """,
@@ -1105,7 +1116,17 @@ def migrate_preferences_schema():
         columns = {row[1] for row in cursor.fetchall()}
         if "reminder_settings" not in columns:
             cursor.execute("ALTER TABLE user_preferences ADD COLUMN reminder_settings TEXT DEFAULT '{}' ")
-            conn.commit()
+        if "context_mode" not in columns:
+            cursor.execute("ALTER TABLE user_preferences ADD COLUMN context_mode TEXT DEFAULT 'contextual'")
+        if "class_name" not in columns:
+            cursor.execute("ALTER TABLE user_preferences ADD COLUMN class_name TEXT")
+        if "subject_name" not in columns:
+            cursor.execute("ALTER TABLE user_preferences ADD COLUMN subject_name TEXT")
+        if "folder_name" not in columns:
+            cursor.execute("ALTER TABLE user_preferences ADD COLUMN folder_name TEXT")
+        if "content_id" not in columns:
+            cursor.execute("ALTER TABLE user_preferences ADD COLUMN content_id TEXT")
+        conn.commit()
     finally:
         conn.close()
 

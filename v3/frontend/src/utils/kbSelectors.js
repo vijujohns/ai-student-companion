@@ -28,7 +28,7 @@ export function buildKnowledgeBaseStatusMessage({
   if (selectedSubject && folders.length === 0) return "No folders found for selected subject.";
   if (selectedFolder && contents.length === 0) return "No files found for selected folder.";
   if (pendingUploadsInScope > 0) {
-    return `${pendingUploadsInScope} uploaded file(s) are still indexing and cannot be selected yet.`;
+    return `${pendingUploadsInScope} uploaded file(s) are still being prepared and cannot be selected yet.`;
   }
   return "Knowledge base loaded.";
 }

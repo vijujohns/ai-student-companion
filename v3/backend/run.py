@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import argparse
 import sys
 import os
 import socket
@@ -47,7 +48,51 @@ def _is_existing_backend_alive(host: str, port: int) -> bool:
         return False
 
 
+def _normalize_reindex_cli_value(value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    normalized = str(value or "true").strip().lower()
+    mapping = {
+        "true": "incremental",
+        "1": "incremental",
+        "yes": "incremental",
+        "on": "incremental",
+        "incremental": "incremental",
+        "changed": "incremental",
+        "full": "full",
+        "rebuild": "full",
+        "fresh": "full",
+        "false": "skip",
+        "0": "skip",
+        "no": "skip",
+        "off": "skip",
+        "skip": "skip",
+    }
+    if normalized not in mapping:
+        raise SystemExit("Invalid --reindex value. Use true|false|incremental|full|skip.")
+    return mapping[normalized]
+
+
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(add_help=True)
+    parser.add_argument(
+        "--reindex",
+        nargs="?",
+        const="true",
+        default=None,
+        help="Enable startup indexing only when explicitly requested. Use --reindex=true, --reindex=incremental, or --reindex=full.",
+    )
+    cli_args, _ = parser.parse_known_args()
+
+    cli_reindex_mode = _normalize_reindex_cli_value(cli_args.reindex)
+    if cli_reindex_mode:
+        os.environ["KB_REINDEX_MODE"] = cli_reindex_mode
+        if cli_reindex_mode == "skip":
+            os.environ["SKIP_KB_REINDEX"] = "1"
+        else:
+            os.environ.pop("SKIP_KB_REINDEX", None)
+
     bind_cfg = get_backend_bind_config()
     probe_host = _probe_host_for(bind_cfg["host"])
     probe_port = int(bind_cfg["port"])

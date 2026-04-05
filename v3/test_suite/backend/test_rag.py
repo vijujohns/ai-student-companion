@@ -224,6 +224,34 @@ class TestGenerateAnswer:
     @patch("app.modules.rag.set_cache")
     @patch("app.modules.rag.save_chat")
     @patch("app.modules.rag.get_history", return_value=[])
+    @patch("app.modules.rag._retrieve_context_items", return_value=[])
+    @patch("app.modules.rag.get_summary", return_value="This chapter covers light, reflection, refraction, and refractive index applications.")
+    @patch("app.modules.rag.resolve_content_reference", return_value={"path": "/tmp/light.pdf", "content_id": "kb:test-light"})
+    @patch("app.modules.rag.get_connection")
+    @patch("app.modules.rag.generate_response", return_value="Real world examples include mirrors, eyeglasses, and a straw appearing bent in water.")
+    def test_generate_answer_uses_saved_summary_for_selected_content_followups(self, mock_generate, mock_conn, mock_resolve, mock_get_summary, mock_retrieve, mock_history, mock_save_chat, mock_set_cache, mock_get_cache):
+        mock_db = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None
+        mock_db.cursor.return_value = mock_cursor
+        mock_conn.return_value = mock_db
+
+        result = generate_answer(
+            "Can you provide some real world examples to this?",
+            "user1",
+            "session1",
+            session_content_override="kb:test-light",
+        )
+
+        assert "mirrors" in result
+        used_context = mock_generate.call_args.kwargs["context"]
+        assert "Document Summary:" in used_context
+        assert "reflection, refraction" in used_context
+
+    @patch("app.modules.rag.get_cache", return_value=None)
+    @patch("app.modules.rag.set_cache")
+    @patch("app.modules.rag.save_chat")
+    @patch("app.modules.rag.get_history", return_value=[])
     @patch("app.modules.rag.search", return_value=["Refraction is the bending of light.", "It happens when light moves between media."])
     @patch("app.modules.rag.get_connection")
     def test_generate_answer_formats_context_boundaries(self, mock_conn, mock_search, mock_history, mock_save_chat, mock_set_cache, mock_get_cache):
@@ -269,6 +297,35 @@ class TestGenerateAnswerStream:
         # Test that function exists and is callable
         from app.modules.rag import generate_answer_stream
         assert callable(generate_answer_stream)
+
+    @patch("app.modules.rag.get_cache", return_value=None)
+    @patch("app.modules.rag.set_cache")
+    @patch("app.modules.rag.generate_response_stream", return_value=iter(["Grounded answer "]))
+    @patch("app.modules.rag._retrieve_context_items", return_value=[{"text": "Refraction is the bending of light.", "metadata": {"type": "concept"}, "score": 0.9}])
+    @patch("app.modules.rag.get_connection")
+    def test_generate_answer_stream_reads_history_before_saving_placeholder(self, mock_conn, mock_retrieve, mock_stream, mock_set_cache, mock_get_cache):
+        mock_db = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None
+        mock_db.cursor.return_value = mock_cursor
+        mock_conn.return_value = mock_db
+
+        events = []
+
+        def fake_get_history(*args, **kwargs):
+            events.append("history")
+            return [{"question": "summarise this chapter", "answer": "Light chapter summary"}]
+
+        def fake_save_chat(*args, **kwargs):
+            events.append("save")
+
+        with (
+            patch("app.modules.rag.get_history", side_effect=fake_get_history),
+            patch("app.modules.rag.save_chat", side_effect=fake_save_chat),
+        ):
+            list(generate_answer_stream("Can you provide some real world examples to this?", "user1", "session1"))
+
+        assert events.index("history") < events.index("save")
 
 
 class TestRetrieveChunks:

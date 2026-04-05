@@ -28,6 +28,13 @@ class TestTaskRouter:
         assert routed.model_task == "quiz"
         assert routed.confidence >= 0.7
 
+    def test_route_task_maps_math_queries_to_math_executor(self):
+        routed = route_task("calculate refractive index when c=1000 and v=100", route="/ask")
+
+        assert routed.task == "math"
+        assert routed.model_task == "math"
+        assert routed.reason.startswith("pattern:math")
+
 
 class TestAskRouteIntegration:
     def test_ask_endpoint_routes_before_generation(self):

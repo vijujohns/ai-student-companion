@@ -16,6 +16,7 @@ import uuid
 from datetime import datetime, UTC
 from typing import List, Dict, Optional
 from .db import get_connection
+from .file_management import resolve_content_reference
 from .rag import retrieve_chunks
 from .model_manager import generate_response
 from .quiz import generate_quiz, get_quiz, submit_quiz_answer
@@ -26,6 +27,48 @@ _SUMMARY_STOPWORDS = {
     "have", "in", "into", "is", "it", "its", "of", "on", "or", "that", "the", "their",
     "this", "to", "was", "were", "which", "with", "your",
 }
+
+_GENERATED_EXAMPLE_NOTE = "Note: This example is added for better understanding and is not from your material."
+_EXAMPLE_MARKERS = ("for example", "for instance", "example", "such as")
+_TITLE_BREAK_WORDS = {
+    "is", "are", "was", "were", "means", "mean", "happens", "happen", "occurs", "occur",
+    "when", "why", "how", "can", "helps", "help", "using", "use", "shows", "show", "explains",
+    "explain", "allows", "allow", "because",
+}
+
+
+def _contains_example_marker(text: str) -> bool:
+    lowered = str(text or "").lower()
+    return any(marker in lowered for marker in _EXAMPLE_MARKERS)
+
+
+def _derive_topic_title(group: List[str], chapter: str, idx: int) -> str:
+    combined = " ".join(group or [])
+    colon_match = re.search(r"\b([A-Za-z][A-Za-z0-9/&\-\s]{2,60}?):", combined)
+    if colon_match:
+        candidate = re.sub(r"\s+", " ", colon_match.group(1)).strip(" ,.-")
+        if candidate and len(candidate.split()) <= 8:
+            return candidate[:80]
+
+    first_sentence = group[0] if group else ""
+    tokens = re.findall(r"[A-Za-z0-9/&'\-]+", first_sentence)
+    collected: List[str] = []
+    for token in tokens:
+        lowered = token.lower()
+        if collected and lowered in _TITLE_BREAK_WORDS:
+            break
+        if len(token) < 2:
+            continue
+        collected.append(token)
+        if len(collected) >= 5:
+            break
+
+    if collected:
+        candidate = " ".join(collected).strip(" ,.-")
+        if candidate:
+            return candidate[0].upper() + candidate[1:]
+
+    return f"{chapter} Topic {idx}"
 
 
 # -------------------------
@@ -185,21 +228,29 @@ def _build_rewritten_content(group: List[str], title: str, step_type: str) -> Di
     bullet_points = _normalize_list_items([_sentence_to_point(sentence) for sentence in cleaned_sentences[:4]])
     ordered = _normalize_list_items(_build_ordered_items(step_type, title, bullet_points))
 
-    focus = ", ".join(keywords[:3])
     summary_parts = []
     if title:
-        if focus:
-            summary_parts.append(f"This section explains {title.lower()} by focusing on {focus}.")
-        else:
-            summary_parts.append(f"This section explains {title.lower()} in a clear, study-friendly way.")
+        summary_parts.append(f"In this card, you learn about {title.lower()} in a teacher-style way.")
 
-    if bullet_points:
-        preview = "; ".join(point.rstrip(".") for point in bullet_points[:2])
-        summary_parts.append(f"Key ideas include {preview}.")
-    elif cleaned_sentences:
-        summary_parts.append(cleaned_sentences[0][:220])
+    if cleaned_sentences:
+        summary_parts.append(f"What it means: {cleaned_sentences[0][:180]}")
 
-    content = " ".join(part.strip() for part in summary_parts if part.strip())[:420]
+    if len(cleaned_sentences) > 1:
+        follow_up_label = "Why it matters" if step_type != "quiz" else "How to answer it"
+        summary_parts.append(f"{follow_up_label}: {cleaned_sentences[1][:180]}")
+    elif keywords:
+        summary_parts.append(f"It connects to {', '.join(keywords[:3])} in the lesson.")
+
+    example_present = _contains_example_marker(" ".join(cleaned_sentences + bullet_points))
+    if step_type in {"concept", "example"} and not example_present:
+        bullet_points = _normalize_list_items(
+            [
+                *bullet_points[:4],
+                f"Example: Think of {title.lower()} in a simple everyday situation. {_GENERATED_EXAMPLE_NOTE}",
+            ]
+        )
+
+    content = " ".join(part.strip() for part in summary_parts if part.strip())[:520]
     return {
         "content": content,
         "bullets": [] if step_type == "quiz" else bullet_points,
@@ -396,6 +447,72 @@ def _infer_step_type(title: str, content: str) -> str:
     return "concept"
 
 
+def _build_summary_step(chapter: str, steps: List[Dict]) -> Dict[str, object]:
+    topic_titles = [
+        str(step.get("title", "")).strip()
+        for step in steps
+        if str(step.get("type", "concept")) != "revision" and str(step.get("title", "")).strip()
+    ]
+    preview = ", ".join(topic_titles[:4]) if topic_titles else chapter
+    bullets = _normalize_list_items([f"Quick revision: remember the key idea from {title}" for title in topic_titles[:6]])
+    return {
+        "id": len(steps) + 1,
+        "title": "Summary & Quick Revision",
+        "type": "revision",
+        "status": "pending",
+        "content": f"This lesson on {chapter} is easier to revise when you review one key idea at a time. Focus on {preview}.",
+        "bullets": bullets,
+        "numbered": [],
+    }
+
+
+def _ensure_card_requirements(steps: List[Dict], chapter: str) -> List[Dict]:
+    prepared = []
+    for idx, step in enumerate(steps, start=1):
+        current = {
+            "id": int(step.get("id", idx)),
+            "title": str(step.get("title", f"Step {idx}")),
+            "type": str(step.get("type", "concept")),
+            "status": str(step.get("status", "pending")),
+            "content": str(step.get("content", "")).strip(),
+            "bullets": _normalize_list_items(step.get("bullets", [])),
+            "numbered": _normalize_list_items(step.get("numbered", [])),
+        }
+        if not current["content"]:
+            current["content"] = f"In this card, you learn about {current['title'].lower()} in a simple, student-friendly way."
+        prepared.append(current)
+
+    if not prepared:
+        return default_steps()
+
+    non_revision = [step for step in prepared if step.get("type") != "revision"]
+    if non_revision and not any(step.get("type") == "example" for step in non_revision):
+        example_step = non_revision[min(len(non_revision) - 1, max(0, len(non_revision) // 2))]
+        example_step["type"] = "example"
+        merged = " ".join([example_step.get("content", ""), *example_step.get("bullets", [])]).lower()
+        if "not from your material" not in merged:
+            example_step["bullets"] = _normalize_list_items(
+                [
+                    *example_step.get("bullets", [])[:4],
+                    f"Example: Think of {example_step['title'].lower()} in a simple everyday situation. {_GENERATED_EXAMPLE_NOTE}",
+                ]
+            )
+
+    summary_candidates = [step for step in prepared if step.get("type") == "revision"]
+    main_steps = [step for step in prepared if step.get("type") != "revision"]
+    summary_step = summary_candidates[-1] if summary_candidates else _build_summary_step(chapter, main_steps)
+    summary_step["title"] = "Summary & Quick Revision"
+    if not summary_step.get("content"):
+        summary_step["content"] = _build_summary_step(chapter, main_steps)["content"]
+    if not summary_step.get("bullets"):
+        summary_step["bullets"] = _build_summary_step(chapter, main_steps)["bullets"]
+
+    final_steps = [*main_steps, summary_step]
+    for idx, step in enumerate(final_steps, start=1):
+        step["id"] = idx
+    return final_steps
+
+
 def _build_adaptive_steps_with_content(chunks: List[str], chapter: str) -> List[Dict]:
     """
     Build context-tailored lesson steps from retrieved chunks.
@@ -405,8 +522,7 @@ def _build_adaptive_steps_with_content(chunks: List[str], chapter: str) -> List[
     if not valid_chunks:
         return default_steps()
 
-    # Derive a dynamic step count from available context.
-    step_count = max(4, min(8, max(1, len(valid_chunks) // 2 + 2)))
+    topic_count = max(2, min(6, len(valid_chunks)))
 
     all_sentences: List[str] = []
     for chunk in valid_chunks:
@@ -415,12 +531,12 @@ def _build_adaptive_steps_with_content(chunks: List[str], chapter: str) -> List[
     if not all_sentences:
         return _default_steps_with_content(valid_chunks, chapter)
 
-    group_size = max(1, len(all_sentences) // step_count)
+    group_size = max(1, len(all_sentences) // topic_count)
     steps: List[Dict] = []
     cursor = 0
 
-    for idx in range(1, step_count + 1):
-        if idx == step_count:
+    for idx in range(1, topic_count + 1):
+        if idx == topic_count:
             group = all_sentences[cursor:]
         else:
             group = all_sentences[cursor:cursor + group_size]
@@ -429,16 +545,7 @@ def _build_adaptive_steps_with_content(chunks: List[str], chapter: str) -> List[
         if not group:
             break
 
-        seed = group[0]
-        seed_words = [w for w in re.findall(r"[A-Za-z0-9']+", seed) if len(w) > 2]
-        short_title = " ".join(seed_words[:6]).strip()
-        if short_title:
-            title = short_title[:80].rstrip(" ,.-")
-            if not title.lower().startswith(("step", "topic")):
-                title = title[0].upper() + title[1:]
-        else:
-            title = f"{chapter} - Topic {idx}"
-
+        title = _derive_topic_title(group, chapter, idx)
         step_type = _infer_step_type(title, " ".join(group))
         structured = _build_rewritten_content(group, title, step_type)
         steps.append(
@@ -454,7 +561,7 @@ def _build_adaptive_steps_with_content(chunks: List[str], chapter: str) -> List[
             }
         )
 
-    return steps or _default_steps_with_content(valid_chunks, chapter)
+    return _ensure_card_requirements(steps or _default_steps_with_content(valid_chunks, chapter), chapter)
 
 
 def _normalize_steps(steps: List[Dict]) -> List[Dict]:
@@ -505,6 +612,8 @@ def generate_lesson_plan(
     chapter: str,
     model_name: Optional[str] = None,
     lesson_context: Optional[str] = None,
+    selected_content: Optional[str] = None,
+    requested_by: Optional[Dict[str, str]] = None,
 ) -> Dict:
     """
     Generate a structured lesson plan for a chapter.
@@ -525,21 +634,37 @@ def generate_lesson_plan(
     if not session_id:
         session_id = str(uuid.uuid4())
 
+    resolved_selected_content = None
+    selected_content_path = None
+    if selected_content:
+        try:
+            resolved_selected_content = resolve_content_reference(requested_by or {"username": user_id}, selected_content)
+            selected_content = str(resolved_selected_content.get("content_id") or selected_content)
+            selected_content_path = str(resolved_selected_content.get("path") or "").strip() or None
+        except Exception:
+            selected_content_path = None
+
     # 🔹 Retrieve chapter content (RAG)
-    chunks = retrieve_chunks(chapter)
-    context = " ".join(chunks[:10])  # limit for initial prompt
+    chunks = retrieve_chunks(chapter, filter_path=selected_content_path)
+    context = "\n\n".join(f"- {chunk}" for chunk in chunks[:12])  # keep topic boundaries readable for the model
 
     context_hint = (lesson_context or "").strip()
 
     # 🔹 Build prompt for LLM
     prompt = f"""
-You are an AI tutor. Generate a detailed lesson plan for the chapter below.
-Constraints:
-- Use only the provided content.
-- Build a coherent lesson that reflects the actual chapter flow.
-- Number of steps should adapt to the chapter depth (typically 4-8).
-- Include concepts, examples/applications, and practice/revision where relevant.
-- Rewrite the material in teaching language instead of copying chapter lines verbatim.
+You are an AI tutor preparing a student-friendly lesson plan from the provided chapter content.
+
+Strict requirements:
+- Use only the provided content as the grounding source.
+- Identify ALL main topics in the material before writing.
+- Create one card per main topic so no major topic is missed.
+- Add a final summary card at the end for quick revision.
+- Use a teacher-style explanation for every card.
+- Each non-summary card should explain what the topic is, why it matters, and how it works where relevant.
+- Each non-summary card should include at least one example.
+- If an example is not clearly from the material, add this exact note: "{_GENERATED_EXAMPLE_NOTE}"
+- Keep the writing simple, clear, and easy for students to follow.
+- Use bullets or numbered lists where they help readability.
 - Return valid JSON only (no markdown, no commentary).
 - JSON must be an object with a top-level key "steps".
 - Each step must include: title, type, content, bullets, numbered.
@@ -559,10 +684,10 @@ Required Output Format:
 {{
     "steps": [
         {{
-            "title": "<content-specific topic>",
+            "title": "<specific topic title>",
             "type": "concept|example|quiz|revision",
-            "content": "<rewritten teaching summary>",
-            "bullets": ["<key point>", "<key point>"],
+            "content": "<teacher-style explanation>",
+            "bullets": ["<key point or example>"],
             "numbered": ["<ordered item if needed>"]
         }}
     ]
@@ -596,12 +721,13 @@ Required Output Format:
         rewritten_steps = _rewrite_steps_abstractive(chapter, adaptive_steps, model_name=model_name)
         steps = rewritten_steps or adaptive_steps
 
-    steps = _normalize_steps(steps)
+    steps = _ensure_card_requirements(_normalize_steps(steps), chapter)
 
     # 🔹 Construct final lesson plan
     plan = {
         "session_id": session_id,
         "chapter": chapter,
+        "selected_content": selected_content,
         "steps": steps
     }
 

@@ -133,24 +133,47 @@ def _log_retrieved_chunks(query: str, items: list[dict]) -> None:
         )
 
 
+def _context_section_name(item: dict) -> str:
+    metadata = item.get("metadata") or {}
+    chunk_type = str(metadata.get("type") or "").strip().lower()
+    if chunk_type in {"concept", "definition"}:
+        return "Concept"
+    if chunk_type == "example":
+        return "Example"
+    if chunk_type == "formula":
+        return "Formula"
+    if chunk_type == "question":
+        return "Question Bank"
+    return "Reference"
+
+
+
 def _format_context_block(items: list[dict], summary_context: str = "") -> str:
     parts = ["[CONTEXT START]"]
     if summary_context:
         parts.append(f"Document Summary:\n{summary_context.strip()}")
 
-    for idx, item in enumerate(items, start=1):
-        metadata = item.get("metadata") or {}
-        labels = []
-        if metadata.get("chapter"):
-            labels.append(f"chapter={metadata['chapter']}")
-        if metadata.get("topic"):
-            labels.append(f"topic={metadata['topic']}")
-        if metadata.get("type"):
-            labels.append(f"type={metadata['type']}")
-        header = f"Chunk {idx}"
-        if labels:
-            header += f" ({', '.join(labels)})"
-        parts.append(f"{header}:\n{str(item.get('text') or '').strip()}")
+    section_order = ["Concept", "Example", "Formula", "Question Bank", "Reference"]
+    grouped: dict[str, list[dict]] = {name: [] for name in section_order}
+    for item in items:
+        grouped.setdefault(_context_section_name(item), []).append(item)
+
+    chunk_number = 1
+    for section in section_order:
+        entries = grouped.get(section) or []
+        if not entries:
+            continue
+        parts.append(f"{section}:")
+        for item in entries:
+            metadata = item.get("metadata") or {}
+            labels = []
+            if metadata.get("chapter"):
+                labels.append(f"chapter={metadata['chapter']}")
+            if metadata.get("topic"):
+                labels.append(f"topic={metadata['topic']}")
+            label_text = f" ({', '.join(labels)})" if labels else ""
+            parts.append(f"- Chunk {chunk_number}{label_text}: {str(item.get('text') or '').strip()}")
+            chunk_number += 1
 
     parts.append("[CONTEXT END]")
     return "\n\n".join(part for part in parts if part).strip()
@@ -221,6 +244,144 @@ def _looks_like_summary_request(query: str) -> bool:
     return any(term in text for term in summary_terms)
 
 
+
+def _infer_retrieval_task(task: str, query: str) -> str:
+    normalized_task = str(task or "qa").strip().lower() or "qa"
+    lowered = str(query or "").strip().lower()
+    if normalized_task in {"quiz", "assessment", "summary", "lesson", "flashcards", "math", "translation"}:
+        return normalized_task
+    if _looks_like_summary_request(lowered):
+        return "summary"
+    if any(term in lowered for term in ("quiz", "mcq", "multiple choice", "test me")):
+        return "quiz"
+    if any(term in lowered for term in ("solve", "equation", "formula", "calculate", "derive")):
+        return "math"
+    if any(term in lowered for term in ("explain", "what is", "why", "how", "describe", "definition")):
+        return "lesson"
+    return normalized_task
+
+
+
+def _select_context_top_k(query: str, task: str, summary_context: str = "") -> int:
+    configured = min(max(3, int(get_rag_top_k(default=4) or 4)), 5)
+    retrieval_task = _infer_retrieval_task(task, query)
+    tuned = {
+        "quiz": 3,
+        "assessment": 3,
+        "qa": 4,
+        "lesson": 4,
+        "flashcards": 4,
+        "math": 4,
+        "summary": 5,
+        "translation": 4,
+    }.get(retrieval_task, configured)
+    if summary_context and retrieval_task == "summary":
+        tuned = 5
+    return min(5, max(3, tuned))
+
+
+
+def _keyword_only_query(query: str) -> str:
+    intent_words = {
+        "explain",
+        "describe",
+        "definition",
+        "define",
+        "summarize",
+        "summarise",
+        "summary",
+        "overview",
+        "quiz",
+        "practice",
+        "question",
+        "questions",
+    }
+    keywords = [token for token in dict.fromkeys(_grounding_terms(query)) if token not in intent_words]
+    return " ".join(keywords[:6]).strip()
+
+
+
+def _build_query_variants(query: str, task: str) -> list[str]:
+    normalized_query = " ".join(str(query or "").strip().split())
+    if not normalized_query:
+        return []
+
+    retrieval_task = _infer_retrieval_task(task, normalized_query)
+    variants: list[str] = []
+
+    def add_variant(value: str) -> None:
+        cleaned = " ".join(str(value or "").strip().split())
+        if cleaned and cleaned not in variants:
+            variants.append(cleaned)
+
+    add_variant(normalized_query)
+    keyword_query = _keyword_only_query(normalized_query)
+    add_variant(keyword_query)
+
+    if keyword_query:
+        if retrieval_task in {"qa", "lesson"}:
+            add_variant(f"{keyword_query} definition")
+            add_variant(f"{keyword_query} explanation example")
+        elif retrieval_task in {"quiz", "assessment"}:
+            add_variant(f"{keyword_query} key facts")
+            add_variant(f"{keyword_query} practice questions")
+        elif retrieval_task == "summary":
+            add_variant(f"{keyword_query} summary key points")
+            add_variant(f"{keyword_query} concise overview")
+        elif retrieval_task == "math":
+            add_variant(f"{keyword_query} formula")
+            add_variant(f"{keyword_query} solved example")
+
+    return variants[:4]
+
+
+
+def _retrieve_context_items(
+    query: str,
+    *,
+    task: str = "qa",
+    filter_path: str | None = None,
+    top_k: int = 4,
+    search_k: int = 8,
+) -> list[dict]:
+    retrieval_task = _infer_retrieval_task(task, query)
+    merged: dict[str, dict] = {}
+
+    for variant_rank, variant in enumerate(_build_query_variants(query, retrieval_task)):
+        variant_results = search(
+            variant,
+            filter_path=filter_path,
+            top_k=max(top_k, 3),
+            search_k=max(search_k, top_k * 2),
+            task=retrieval_task,
+            return_details=True,
+        )
+        for item in variant_results or []:
+            normalized = _normalize_retrieval_item(item)
+            text_key = re.sub(r"\s+", " ", normalized.get("text", "")).strip().lower()
+            if not text_key:
+                continue
+
+            variant_bonus = max(0.0, 0.06 - (variant_rank * 0.01))
+            normalized["score"] = float(normalized.get("score", 0.0) or 0.0) + variant_bonus
+            existing = merged.get(text_key)
+            if existing is None or float(normalized["score"]) >= float(existing.get("score", 0.0)):
+                merged[text_key] = {**normalized, "matched_queries": [variant]}
+            else:
+                existing.setdefault("matched_queries", []).append(variant)
+
+    ranked = sorted(
+        merged.values(),
+        key=lambda item: (
+            float(item.get("score", 0.0)),
+            len(item.get("matched_queries", [])),
+            len(_grounding_terms(item.get("text", ""))),
+        ),
+        reverse=True,
+    )
+    return _dedupe_context_items(ranked, limit=top_k)
+
+
 # -------------------------
 # Core RAG Functions
 # -------------------------
@@ -277,7 +438,7 @@ def generate_answer(
     cache_content_ref = resolved_content["content_id"] if resolved_content else session_content_ref
 
     summary_context = ""
-    if session_content_path and _looks_like_summary_request(query):
+    if session_content_path:
         try:
             summary_context = (get_summary(session_content_path) or "").strip()
         except Exception:
@@ -294,21 +455,14 @@ def generate_answer(
     last_question = history_data[-1]["question"] if history_data else ""
     enhanced_query = f"{query}. Context: {last_question}" if last_question and len(query) < 80 else query
 
-    top_k = min(max(3, get_rag_top_k(default=4)), 5)
-    if session_content_path and _looks_like_summary_request(query):
-        top_k = min(max(top_k, 4), 5)
-
-    retrieval_results = search(
+    retrieval_task = _infer_retrieval_task(normalized_task, query)
+    top_k = _select_context_top_k(query, retrieval_task, summary_context=summary_context)
+    context_items = _retrieve_context_items(
         enhanced_query,
+        task=retrieval_task,
         filter_path=session_content_path,
         top_k=top_k,
         search_k=max(8, top_k * 2),
-        task=normalized_task,
-        return_details=True,
-    )
-    context_items = _dedupe_context_items(
-        [_normalize_retrieval_item(item) for item in (retrieval_results or [])],
-        limit=top_k,
     )
     _log_retrieved_chunks(query, context_items)
 
@@ -405,7 +559,7 @@ def generate_answer_stream(
     cache_content_ref = resolved_content["content_id"] if resolved_content else session_content_ref
 
     summary_context = ""
-    if session_content_path and _looks_like_summary_request(query):
+    if session_content_path:
         try:
             summary_context = (get_summary(session_content_path) or "").strip()
         except Exception:
@@ -426,6 +580,8 @@ def generate_answer_stream(
             yield token + " "
         return
 
+    history_data = get_history(user_id, session_id)[-3:]
+
     save_chat(
         user_id,
         session_id,
@@ -435,25 +591,17 @@ def generate_answer_stream(
         selected_content=cache_content_ref,
     )
 
-    history_data = get_history(user_id, session_id)[-3:]
     last_question = history_data[-1]["question"] if history_data else ""
     enhanced_query = f"{query}. Context: {last_question}" if last_question and len(query) < 80 else query
 
-    top_k = min(max(3, get_rag_top_k(default=4)), 5)
-    if session_content_path and _looks_like_summary_request(query):
-        top_k = min(max(top_k, 4), 5)
-
-    retrieval_results = search(
+    retrieval_task = _infer_retrieval_task(normalized_task, query)
+    top_k = _select_context_top_k(query, retrieval_task, summary_context=summary_context)
+    context_items = _retrieve_context_items(
         enhanced_query,
+        task=retrieval_task,
         filter_path=session_content_path,
         top_k=top_k,
         search_k=max(8, top_k * 2),
-        task=normalized_task,
-        return_details=True,
-    )
-    context_items = _dedupe_context_items(
-        [_normalize_retrieval_item(item) for item in (retrieval_results or [])],
-        limit=top_k,
     )
     _log_retrieved_chunks(query, context_items)
 
@@ -497,36 +645,41 @@ def generate_answer_stream(
 # -------------------------
 # Retrieve knowledge chunks (lesson/quiz context)
 # -------------------------
-def retrieve_chunks(chapter: str, top_k: int = 5):
+def retrieve_chunks(chapter: str, top_k: int = 5, filter_path: str | None = None):
     """
     Retrieve chapter-relevant chunks from the indexed documents.
 
     Strategy:
-    1. Prefer chunks whose source path contains chapter keywords.
-    2. Fall back to FAISS semantic search.
+    1. If a selected content path is provided, scope retrieval to that file.
+    2. Prefer chunks whose source path contains chapter keywords.
+    3. Fall back to FAISS semantic search.
     """
     query = (chapter or "").strip()
     if not query:
         return []
 
     chapter_terms = {w for w in query.lower().replace("-", " ").split() if len(w) > 1}
+    normalized_filter_path = os.path.normcase(os.path.normpath(str(filter_path or ""))) if filter_path else None
 
     source_matches = []
     for doc in documents:
         if not isinstance(doc, dict):
             continue
-        source = (doc.get("source") or "").lower()
+        source_raw = str(doc.get("source") or "").strip()
+        source = source_raw.lower()
         text = doc.get("text", "")
         if not source or not text:
+            continue
+        if normalized_filter_path and os.path.normcase(os.path.normpath(source_raw)) != normalized_filter_path:
             continue
 
         source_words = set(source.replace("\\", " ").replace("/", " ").replace("-", " ").split())
         overlap = len(chapter_terms.intersection(source_words))
-        if overlap > 0:
+        if overlap > 0 or normalized_filter_path:
             source_matches.append((overlap, text))
 
     if source_matches:
         source_matches.sort(reverse=True, key=lambda x: x[0])
         return [text for _, text in source_matches[:top_k]]
 
-    return search(query, top_k=top_k, search_k=max(8, top_k * 2), task="lesson")
+    return search(query, top_k=top_k, search_k=max(8, top_k * 2), task="lesson", filter_path=filter_path)

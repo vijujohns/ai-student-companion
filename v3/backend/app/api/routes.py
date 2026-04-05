@@ -68,7 +68,7 @@ from ..modules.utility_executor import execute_utility_task, is_utility_task
 
 # ✅ Import Pydantic schemas for validation
 from ..schemas.request import (
-    LoginRequest, AskRequest, RenameSessionRequest, SetSessionContentRequest,
+    LoginRequest, AskRequest, RenameSessionRequest, SetSessionContentRequest, ContextSelectionRequest,
     LessonPlanCreateRequest, LessonProgressRequest, QuizGenerateRequest,
     QuizSubmitRequest, FlashcardCreateRequest, ArtifactGenerateRequest, RegisterRequest, ResetPasswordRequest,
     ProfileUpdateRequest, SubscriptionQuoteRequest, SubscriptionActivateRequest,
@@ -181,13 +181,20 @@ def runtime_health():
     Lightweight runtime status endpoint used by frontend diagnostics.
     Kept unauthenticated so clients can detect backend reachability issues.
     """
-    skip_reindex = bool(os.getenv("SKIP_KB_REINDEX"))
+    raw_mode = str(os.getenv("KB_REINDEX_MODE", "skip") or "skip").strip().lower()
+    if str(os.getenv("SKIP_KB_REINDEX", "")).strip().lower() in {"1", "true", "yes", "on"}:
+        raw_mode = "skip"
+    if raw_mode in {"true", "1", "yes", "on", "changed"}:
+        raw_mode = "incremental"
+    elif raw_mode not in {"incremental", "full", "skip"}:
+        raw_mode = "skip"
+
     return envelope(
         {
             "status": "ok",
             "api": "up",
             "ws": "configured",
-            "kb_reindex_mode": "skipped" if skip_reindex else "enabled",
+            "kb_reindex_mode": raw_mode,
         },
         message_id="MSG-1000",
     )
@@ -274,29 +281,105 @@ def ask(request: AskRequest, user=Depends(get_current_user)):
     }, message_id="MSG-1000")
 
 
-@router.post("/admin/reindex")
-def reindex(payload: Optional[dict] = Body(default=None), user=Depends(require_role("admin"))):
-    from ..modules.kb_sync import load_knowledge_base
+def _start_admin_reindex_job(
+    payload: Optional[dict],
+    *,
+    force_reindex: bool,
+    requested_type: str,
+):
+    from ..modules.kb_sync import start_reindex_job
 
     payload = payload or {}
-    target_path = payload.get("path") if isinstance(payload, dict) else None
-    result = load_knowledge_base(force_reindex=True, target_path=target_path)
-    response = {"status": "Reindex completed"}
-    if isinstance(result, dict) and result:
-        response["reindex"] = result
+    target_path = None
+    if isinstance(payload, dict):
+        target_path = payload.get("path") or payload.get("relative_path") or payload.get("content_id")
+
+    result = start_reindex_job(
+        force_reindex=force_reindex,
+        target_path=target_path,
+        requested_type=requested_type,
+    )
+    response = {
+        "status": result.get("status") or "started",
+        "type": result.get("type") or requested_type,
+        "job_id": result.get("job_id"),
+    }
+    if isinstance(result.get("reindex"), dict):
+        response["reindex"] = result["reindex"]
     return envelope(response, message_id="MSG-1000")
+
+
+@router.post("/admin/reindex")
+def reindex(payload: Optional[dict] = Body(default=None), user=Depends(require_role("admin"))):
+    payload = payload or {}
+    requested_type = "file" if isinstance(payload, dict) and (payload.get("path") or payload.get("relative_path") or payload.get("content_id")) else "full"
+    return _start_admin_reindex_job(payload, force_reindex=requested_type == "full", requested_type=requested_type)
+
+
+@router.post("/admin/reindex/full")
+def reindex_full(payload: Optional[dict] = Body(default=None), user=Depends(require_role("admin"))):
+    return _start_admin_reindex_job(payload, force_reindex=True, requested_type="full")
 
 
 @router.post("/admin/reindex-incremental")
 def incremental_reindex(payload: Optional[dict] = Body(default=None), user=Depends(require_role("admin"))):
-    from ..modules.kb_sync import load_knowledge_base
+    return _start_admin_reindex_job(payload, force_reindex=False, requested_type="incremental")
 
+
+@router.post("/admin/reindex/incremental")
+def incremental_reindex_v2(payload: Optional[dict] = Body(default=None), user=Depends(require_role("admin"))):
+    return _start_admin_reindex_job(payload, force_reindex=False, requested_type="incremental")
+
+
+@router.post("/admin/reindex/file")
+def file_reindex(payload: Optional[dict] = Body(default=None), user=Depends(require_role("admin"))):
     payload = payload or {}
-    target_path = payload.get("path") if isinstance(payload, dict) else None
-    result = load_knowledge_base(force_reindex=False, target_path=target_path)
-    response = {"status": "Incremental reindex completed"}
-    if isinstance(result, dict) and result:
-        response["reindex"] = result
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="A file path/content reference is required for file reindex.")
+
+    file_id = payload.get("file_id")
+    if file_id is not None:
+        result = services.knowledge.queue_reindex(user, scope="file", file_id=int(file_id))
+        return envelope(
+            {
+                "status": "started",
+                "type": "file",
+                "job_id": result.get("job_id"),
+                "queued_files": result.get("queued_files", 0),
+            },
+            message_id="MSG-1000",
+        )
+
+    if not (payload.get("path") or payload.get("relative_path") or payload.get("content_id")):
+        raise HTTPException(status_code=400, detail="A file path/content reference is required for file reindex.")
+    return _start_admin_reindex_job(payload, force_reindex=False, requested_type="file")
+
+
+@router.get("/admin/reindex-status")
+def admin_reindex_status(user=Depends(require_role("admin"))):
+    from ..modules.kb_sync import get_reindex_progress
+
+    progress = get_reindex_progress()
+    response = {
+        "status": progress.get("status") or "idle",
+        "type": progress.get("type") or progress.get("mode") or "idle",
+        "job_id": progress.get("job_id"),
+        "reindex": progress,
+    }
+    return envelope(response, message_id="MSG-1000")
+
+
+@router.get("/admin/reindex/status/{job_id}")
+def admin_reindex_status_by_job(job_id: str, user=Depends(require_role("admin"))):
+    from ..modules.kb_sync import get_reindex_progress
+
+    progress = get_reindex_progress(job_id)
+    response = {
+        "status": progress.get("status") or "idle",
+        "type": progress.get("type") or progress.get("mode") or "unknown",
+        "job_id": progress.get("job_id") or job_id,
+        "reindex": progress,
+    }
     return envelope(response, message_id="MSG-1000")
 
 
@@ -748,6 +831,94 @@ def set_session_content(session_id: str, request: SetSessionContentRequest, user
     return envelope(services.learning.set_session_content(user, session_id, request.content_id), message_id="MSG-1000")
 
 
+@router.get("/context")
+def get_learning_context(user=Depends(get_current_user)):
+    """Return the current user's saved learning context / explorer mode."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT context_mode, class_name, subject_name, folder_name, content_id
+            FROM user_preferences
+            WHERE user_id=?
+            LIMIT 1
+            """,
+            (user["username"],),
+        )
+        row = cur.fetchone()
+    finally:
+        conn.close()
+
+    return envelope(
+        {
+            "mode": (row[0] if row and len(row) > 0 and row[0] else "contextual"),
+            "class_name": row[1] if row and len(row) > 1 else None,
+            "subject_name": row[2] if row and len(row) > 2 else None,
+            "folder_name": row[3] if row and len(row) > 3 else None,
+            "content_id": row[4] if row and len(row) > 4 else None,
+        },
+        message_id="MSG-1000",
+    )
+
+
+@router.post("/context")
+def set_learning_context(request: ContextSelectionRequest, user=Depends(get_current_user)):
+    """Persist the user's global learning context / explorer mode selection."""
+    from datetime import datetime, timezone
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO user_preferences (
+                user_id,
+                preferred_language,
+                reminder_settings,
+                context_mode,
+                class_name,
+                subject_name,
+                folder_name,
+                content_id,
+                updated_at
+            )
+            VALUES (?, 'en', '{}', ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                context_mode=excluded.context_mode,
+                class_name=excluded.class_name,
+                subject_name=excluded.subject_name,
+                folder_name=excluded.folder_name,
+                content_id=excluded.content_id,
+                updated_at=excluded.updated_at
+            """,
+            (
+                user["username"],
+                request.mode,
+                request.class_name,
+                request.subject_name,
+                request.folder_name,
+                request.content_id,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return envelope(
+        {
+            "mode": request.mode,
+            "class_name": request.class_name,
+            "subject_name": request.subject_name,
+            "folder_name": request.folder_name,
+            "content_id": request.content_id,
+            "updated": True,
+        },
+        message_id="MSG-1000",
+    )
+
+
 @router.post("/files/upload")
 async def upload_file(
     class_name: str = Form(...),
@@ -863,6 +1034,8 @@ def create_plan(request: LessonPlanCreateRequest, user=Depends(get_current_user)
             request.session_id,
             request.chapter,
             lesson_context=request.lesson_context,
+            selected_content=request.content_id,
+            requested_by=user,
         )
     except Exception:
         release_usage(user["username"], "lesson")

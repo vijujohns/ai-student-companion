@@ -5,6 +5,7 @@ export function useChatSendMessage({
   input,
   sessionId,
   selectedContent,
+  chatTask = null,
   setMessages,
   setCurrentStream,
   setWsError,
@@ -26,6 +27,7 @@ export function useChatSendMessage({
     if (!input.trim()) return;
 
     const currentSession = sessionId || Date.now().toString();
+    const activeContentId = chatTask === "explorer" ? null : selectedContent;
 
     setMessages((prev) => [...prev, { type: "user", text: input }]);
     setCurrentStream("");
@@ -43,12 +45,12 @@ export function useChatSendMessage({
       localStorage.setItem("session_id", currentSession);
     }
 
-    if (selectedContent) {
+    if (activeContentId) {
       try {
         await apiFetch(`/sessions/${currentSession}/content`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content_id: selectedContent }),
+          body: JSON.stringify({ content_id: activeContentId }),
         });
       } catch (err) {
         console.error("❌ Failed to persist selected content:", err);
@@ -58,7 +60,8 @@ export function useChatSendMessage({
     send({
       query: input,
       session_id: currentSession,
-      context_id: selectedContent,
+      context_id: activeContentId,
+      ...(chatTask ? { task: chatTask } : {}),
     });
 
     armStreamWatchdog(currentSession);
@@ -77,6 +80,7 @@ export function useChatSendMessage({
     loadSessions,
     pendingResponseRef,
     selectedContent,
+    chatTask,
     send,
     sessionId,
     setCurrentStream,

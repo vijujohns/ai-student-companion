@@ -209,7 +209,8 @@ class TestGenerateLessonPlan:
 
         assert plan is not None
         assert plan["chapter"] == "Chapter 1"
-        assert len(plan["steps"]) == 2
+        assert len(plan["steps"]) == 3
+        assert plan["steps"][-1]["type"] == "revision"
         assert plan["session_id"] == "session1"
         assert "lesson_plan_id" in plan
         assert plan["steps"][0]["bullets"] == ["b1."]
@@ -231,6 +232,69 @@ class TestGenerateLessonPlan:
         except ValueError:
             valid_uuid = False
         assert valid_uuid
+
+    @patch("app.modules.lesson_plan.resolve_content_reference")
+    @patch("app.modules.lesson_plan.retrieve_chunks")
+    @patch("app.modules.lesson_plan.generate_response")
+    def test_generate_lesson_plan_scopes_retrieval_to_selected_content(self, mock_generate, mock_retrieve, mock_resolve):
+        """Test that lesson generation uses the selected content path to avoid cross-chapter leakage."""
+        mock_resolve.return_value = {
+            "content_id": "kb:kerala-pdf",
+            "path": r"D:\\GPT\\ai-student-companion\\v3\\knowledge_base\\Class X\\General Knowledge\\TextBooks\\Chapter 1 - Kerala.pdf",
+            "title": "Chapter 1 - Kerala",
+        }
+        mock_retrieve.return_value = ["Districts of Kerala", "Festivals of Kerala"]
+        mock_generate.return_value = json.dumps(
+            {
+                "steps": [
+                    {
+                        "title": "Districts of Kerala",
+                        "type": "concept",
+                        "content": "Kerala has many districts with different features.",
+                        "bullets": ["Each district has unique culture"],
+                        "numbered": [],
+                    }
+                ]
+            }
+        )
+
+        generate_lesson_plan("user1", "session1", "Chapter 1 - Kerala", selected_content="kb:kerala-pdf")
+
+        mock_resolve.assert_called_once()
+        mock_retrieve.assert_called_once_with(
+            "Chapter 1 - Kerala",
+            filter_path=r"D:\\GPT\\ai-student-companion\\v3\\knowledge_base\\Class X\\General Knowledge\\TextBooks\\Chapter 1 - Kerala.pdf",
+        )
+
+    @patch("app.modules.lesson_plan.retrieve_chunks")
+    @patch("app.modules.lesson_plan.generate_response")
+    def test_generate_lesson_plan_prompt_requests_topic_cards_summary_and_example_note(self, mock_generate, mock_retrieve):
+        """Test that the lesson prompt asks for topic-complete cards, examples, and a final summary."""
+        mock_retrieve.return_value = [
+            "Reflection of light is the bouncing back of light from a surface.",
+            "Refraction is the bending of light when it passes from one medium to another.",
+        ]
+        mock_generate.return_value = json.dumps(
+            {
+                "steps": [
+                    {
+                        "title": "Reflection of Light",
+                        "type": "concept",
+                        "content": "Reflection explains how light bounces back.",
+                        "bullets": ["The angle of incidence equals the angle of reflection"],
+                        "numbered": [],
+                    }
+                ]
+            }
+        )
+
+        generate_lesson_plan("user1", "session1", "Light")
+
+        prompt = mock_generate.call_args.kwargs["query"]
+        assert "one card per main topic" in prompt.lower()
+        assert "teacher-style" in prompt.lower()
+        assert "final summary card" in prompt.lower()
+        assert "not from your material" in prompt.lower()
 
     @patch("app.modules.lesson_plan.retrieve_chunks")
     @patch("app.modules.lesson_plan.generate_response")
@@ -256,6 +320,31 @@ class TestGenerateLessonPlan:
         assert len(steps) >= 1
         assert any(step["content"] for step in steps)
         assert any(step["bullets"] or step["numbered"] for step in steps)
+
+    def test_adaptive_fallback_adds_summary_card_and_marks_generated_examples(self):
+        chunks = [
+            "Reflection of light happens when a ray of light bounces back from a mirror.",
+            "Refraction of light happens when light bends while passing from air to water.",
+            "Lenses use refraction to help form clear images in cameras and glasses.",
+        ]
+
+        steps = _build_adaptive_steps_with_content(chunks, "Light")
+
+        assert len(steps) >= 3
+        assert steps[-1]["type"] == "revision"
+        assert "summary" in steps[-1]["title"].lower() or "revision" in steps[-1]["title"].lower()
+
+        example_steps = [step for step in steps if step["type"] == "example"]
+        assert example_steps, "Expected at least one example card in the fallback lesson plan."
+
+        example_text = " ".join(
+            [
+                example_steps[0].get("content", ""),
+                *example_steps[0].get("bullets", []),
+                *example_steps[0].get("numbered", []),
+            ]
+        ).lower()
+        assert "not from your material" in example_text
 
 
 class TestAbstractiveRewrite:

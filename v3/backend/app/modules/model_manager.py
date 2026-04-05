@@ -339,18 +339,20 @@ def get_llm_instance(model_config):
 # Prompt Builder
 # -------------------------
 def build_prompt(context, query, history, task):
-    if task in {"qa", "lesson", "summary"}:
+    normalized_task = str(task or "qa").strip().lower() or "qa"
+
+    if normalized_task in {"qa", "lesson"}:
         return f"""
 You are an AI tutor helping a student based ONLY on the provided study material.
 
 STRICT RULES (MUST FOLLOW):
-1. You must answer ONLY using the provided context.
-2. Do NOT use outside knowledge.
+1. Answer ONLY from the provided context.
+2. Do NOT use outside knowledge or guess.
 3. If the answer is not present in the context, say EXACTLY:
    "I don't have enough information in the provided material."
-4. Do NOT guess, infer beyond the context, or add facts from memory.
-5. Keep the answer concise, clear, and student-friendly.
-6. When helpful, you may mention the chunk number used, for example `(Chunk 2)`.
+4. Explain step-by-step like a teacher, using short examples from the context when available.
+5. Keep the answer clear, grounded, and student-friendly.
+6. When helpful, cite the section used, for example `(Chunk 2)`.
 
 {context}
 
@@ -359,8 +361,45 @@ Question:
 
 Answer:
 """
-    else:
-        return f"{history}\nContext:\n{context}\nQuestion:\n{query}\nAnswer:"
+
+    if normalized_task == "summary":
+        return f"""
+You are summarizing ONLY the provided study material.
+
+STRICT RULES (MUST FOLLOW):
+1. Cover all key topics that appear in the context.
+2. Be concise and well-organized.
+3. Do NOT add outside facts.
+4. If the context is insufficient, say EXACTLY:
+   "I don't have enough information in the provided material."
+
+{context}
+
+Request:
+{query}
+
+Summary:
+"""
+
+    if normalized_task == "quiz":
+        return f"""
+You are generating quiz content ONLY from the provided study material.
+
+STRICT RULES (MUST FOLLOW):
+1. No ambiguous questions.
+2. Every answer must match the provided context exactly.
+3. Do NOT invent facts outside the context.
+4. If the context is insufficient, return the safest possible grounded output.
+
+{context}
+
+Instructions:
+{query}
+
+Quiz Output:
+"""
+
+    return f"{history}\nContext:\n{context}\nQuestion:\n{query}\nAnswer:"
 
 
 

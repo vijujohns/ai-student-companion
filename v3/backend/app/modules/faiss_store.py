@@ -128,8 +128,8 @@ def _empty_logical_indexes() -> dict[str, list[int]]:
 
 
 def _rebuild_logical_indexes() -> None:
-    global logical_indexes
-    logical_indexes = _empty_logical_indexes()
+    logical_indexes.clear()
+    logical_indexes.update(_empty_logical_indexes())
     for doc_index, doc in enumerate(documents):
         if isinstance(doc, dict):
             index_name = doc.get("index_name") or (doc.get("metadata") or {}).get("index_name") or "general_index"
@@ -187,11 +187,10 @@ def _rebuild_index_from_documents():
 
 def _remove_docs_for_source(source_path: str):
     """Drop all chunks for a source file and rebuild index."""
-    global documents
     if not source_path:
         return
     before = len(documents)
-    documents = [
+    documents[:] = [
         d for d in documents
         if not (isinstance(d, dict) and d.get("source") == source_path)
     ]
@@ -201,9 +200,9 @@ def _remove_docs_for_source(source_path: str):
 
 def _reset_store():
     """Clear all in-memory vectors and documents for a full rebuild."""
-    global documents, logical_indexes
-    documents = []
-    logical_indexes = _empty_logical_indexes()
+    documents.clear()
+    logical_indexes.clear()
+    logical_indexes.update(_empty_logical_indexes())
     _rebuild_index_from_documents()
 
 
@@ -269,24 +268,38 @@ def save_index():
 
 
 def load_index():
-    global index, documents, embedding_dim, logical_indexes
+    global index, embedding_dim
 
     if os.path.exists(INDEX_FILE) and os.path.exists(DOC_FILE):
-        index = faiss.read_index(INDEX_FILE)
-        embedding_dim = int(getattr(index, "d", embedding_dim) or embedding_dim)
+        try:
+            index = faiss.read_index(INDEX_FILE)
+            embedding_dim = int(getattr(index, "d", embedding_dim) or embedding_dim)
 
-        with open(DOC_FILE, "rb") as f:
-            documents = pickle.load(f)
+            with open(DOC_FILE, "rb") as f:
+                loaded_documents = pickle.load(f)
 
-        if os.path.exists(MULTI_INDEX_FILE):
-            with open(MULTI_INDEX_FILE, "r") as f:
-                logical_indexes = json.load(f)
-        _rebuild_logical_indexes()
+            documents.clear()
+            documents.extend(list(loaded_documents or []))
 
-        print("✅ FAISS index loaded from disk")
-    else:
-        logical_indexes = _empty_logical_indexes()
-        print("⚠️ No existing index found")
+            logical_indexes.clear()
+            logical_indexes.update(_empty_logical_indexes())
+            if os.path.exists(MULTI_INDEX_FILE):
+                with open(MULTI_INDEX_FILE, "r") as f:
+                    loaded_logical_indexes = json.load(f)
+                if isinstance(loaded_logical_indexes, dict):
+                    logical_indexes.update(loaded_logical_indexes)
+
+            _rebuild_logical_indexes()
+            print("✅ FAISS index loaded from disk")
+            return
+        except Exception as exc:
+            print(f"⚠️ Failed to load persisted FAISS data ({exc}); continuing with an empty index")
+
+    documents.clear()
+    logical_indexes.clear()
+    logical_indexes.update(_empty_logical_indexes())
+    index = faiss.IndexFlatL2(embedding_dim)
+    print("⚠️ No existing index found")
 
 
 # Backward-compat alias retained for older tests/callers that still patch

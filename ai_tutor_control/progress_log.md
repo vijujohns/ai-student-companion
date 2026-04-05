@@ -177,3 +177,98 @@
   - Backend full suite after Step 12D: `555 passed, 1 skipped, 3 warnings`
   - Frontend unit after Step 12D: `169 passed`
   - Frontend Playwright after Step 12D: `15 passed`
+
+## Step 13
+- Date: 2026-04-05
+- Status: In progress (approval required).
+- Scope kept strictly to optimization only: no new routes, no feature expansion, and no architecture redesign.
+- Retrieval precision tuning:
+  - selected task-tuned context windows after evaluation within the requested `3–5` range: `quiz/assessment = 3`, `lesson/qa/math = 4`, `summary = 5`
+  - explanation-style queries now route retrieval toward concept-heavy material, quiz requests toward `qa_index`, and math requests toward `formula_index`
+  - zero-signal / low-value chunks are now filtered out during final ranking instead of being kept only because of source/index bonuses
+- Query rewriting / re-ranking:
+  - added lightweight query variants (original query + keyword query + task-specific rewrites such as `refraction definition` and `refraction explanation example`)
+  - merged variant retrieval results and re-ranked them with metadata-aware scoring so the best grounded 3–5 chunks survive while duplicates/noise are removed
+- Context structuring / prompt refinement:
+  - context blocks are now grouped into labeled sections such as `Concept`, `Example`, `Formula`, and `Question Bank`
+  - explanation prompts now ask for a step-by-step teacher-style answer with examples from context
+  - summary prompts now enforce concise key-topic coverage
+  - quiz prompts now reinforce no-ambiguity / answer-must-match-context behavior
+- Added focused regression coverage in `v3/test_suite/backend/test_precision_rag_optimization.py`.
+- Validation evidence collected after the optimization pass:
+  - Focused Step 13 precision suites: `30 passed, 3 warnings`
+  - Backend full suite: `559 passed, 1 skipped, 3 warnings`
+  - Frontend unit: `169 passed`
+  - Frontend Playwright: `15 passed`
+- Manual dataset validation evidence:
+  - query rewriting now produces clean explanation variants such as `refraction definition` and `refraction explanation example`
+  - ranked sample dataset results showed the expected primary indexes:
+    - explanation -> `concept_index`
+    - quiz -> `qa_index`
+    - math -> `formula_index`
+  - structured context now renders explicit teaching sections (`Concept`, `Example`, `Question Bank`)
+- Approval status: WAITING.
+
+## Operational Step: Indexing Control Enhancement
+- Date: 2026-04-05
+- Status: Completed after approval and follow-up hardening.
+- Goal kept minimal and compatibility-first:
+  - prevent KB indexing on backend startup by default
+  - allow explicit startup control via CLI/env flag
+  - provide non-blocking admin controls for full / incremental / single-file reindex
+  - preserve session usability while indexing runs in the background
+- Backend changes made:
+  - `v3/backend/run.py` now accepts `--reindex=true|incremental|full|skip`
+  - `v3/backend/app/main.py` now resolves startup indexing mode to `skip` by default and defers any requested startup reindex until after the app finishes booting
+  - `v3/backend/app/modules/kb_sync.py` now launches background reindex jobs with a `job_id`, exposes job-aware progress snapshots, and keeps background KB refresh lightweight by using extractive summaries during reindex ingestion instead of immediate local-LLM summarization
+  - `v3/backend/app/api/routes.py` now returns immediate `started` responses for `/admin/reindex`, `/admin/reindex/full`, `/admin/reindex/incremental`, and `/admin/reindex/file`, plus job-status polling endpoints
+- Frontend/admin UX changes made:
+  - `v3/frontend/src/components/ChatPanel.jsx` now tracks `job_id`, polls live status by job, and keeps the admin UI responsive during background indexing
+  - existing admin status UI remains compatible with full / incremental / file-triggered reindex flows
+- Root cause and hardening note:
+  - the remaining `run.py --reindex=true` instability came from startup-time background reindex work beginning too early and immediately entering the heavier summary-generation path while the app was still booting
+  - this was fixed by deferring startup reindex launch until after `Application startup complete` and by using a fast extractive summary path for background reindex jobs
+- Fresh verification evidence collected on 2026-04-05:
+  - Focused regression coverage after the hardening: `14 passed, 3 warnings in 169.84s`
+  - Backend full suite: `567 passed, 1 skipped, 3 warnings in 352.03s`
+  - Frontend full unit suite: `171 passed in 68.12s`
+  - Playwright e2e: `15 passed in 43.3s`
+  - Manual startup without reindex: backend reached `/health/runtime` successfully and reported `"kb_reindex_mode":"skip"`
+  - Manual startup with `run.py --reindex=true`: startup completed successfully, `/health/runtime` remained reachable with `"kb_reindex_mode":"incremental"`, and the background incremental reindex finished without the earlier early exit
+- Approval status: COMPLETED.
+
+## Step 17
+- Date: 2026-04-05
+- Status: Completed after approval.
+- Scope kept strictly compatibility-first and limited to the approved enhancement only:
+  - post-login context popup with class/subject selection or Explorer Mode
+  - global context persistence with edit flow
+  - background content preparation after upload with student-friendly status messaging
+  - context enforcement for guided study features without redesigning the app shell
+  - cleanup of redundant per-page context selectors
+  - student-safe Explorer Mode chat behavior
+- Backend changes made:
+  - added `ContextSelectionRequest` in `v3/backend/app/schemas/request.py`
+  - extended `user_preferences` persistence/migration in `v3/backend/app/modules/db.py` with `context_mode`, `class_name`, `subject_name`, `folder_name`, and `content_id`
+  - added `GET /context` and `POST /context` in `v3/backend/app/api/routes.py`
+  - added Explorer Mode utility routing and safe refusal handling in `v3/backend/app/modules/utility_executor.py` and `v3/backend/app/modules/task_router.py`
+- Frontend changes made:
+  - `v3/frontend/src/components/ChatPanel.jsx` now prompts the student with a learning-context modal after login, supports `Proceed in Explorer Mode`, persists the selected context, renders a context summary/edit bar, and shows friendly background preparation progress after upload
+  - `v3/frontend/src/hooks/useChatSendMessage.js` now dispatches Explorer chat as `task: "explorer"` without binding to file context
+  - `v3/frontend/src/components/style.css` now includes the modal, banner, gate, and processing-state styling for the new workflow
+  - `v3/frontend/src/utils/kbSelectors.js` now uses student-friendly wording (`being prepared`) instead of technical indexing language
+- Compatibility stabilization completed:
+  - refined gating so existing plan-action lesson/quiz flows still work without breaking prior behavior
+  - kept assessment access compatible after the initial over-gating regression was identified and corrected
+  - updated Playwright specs and visual baselines to match the approved new modal workflow
+- Validation evidence collected after implementation:
+  - Focused backend context / Explorer regressions: `3 passed, 79 deselected, 3 warnings`
+  - Backend full suite: `570 passed, 1 skipped, 3 warnings in 301.01s`
+  - Frontend unit suite: `173 passed (17 files)`
+  - Frontend production build: success (`vite build`)
+  - Frontend Playwright / UI regression suite: `15 passed (40.5s)`
+- User-facing result:
+  - students now choose a learning context once after login or continue in Explorer Mode for general educational chat
+  - uploads prepare in the background with clear, non-technical progress messaging
+  - guided study tools stay locked until an appropriate class/subject context is selected, while general chat remains available in Explorer Mode
+- Approval status: COMPLETED.
