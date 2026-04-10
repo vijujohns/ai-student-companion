@@ -178,12 +178,20 @@ class TestQuizAndArtifactContextValidation:
             session_id="uuid-123",
             chapter="Photosynthesis",
             quiz_context="Focus on recall and tricky MCQs",
+            content_id="upload:7",
         )
         assert req.quiz_context == "Focus on recall and tricky MCQs"
+        assert req.content_id == "upload:7"
 
     def test_artifact_generate_request_allows_empty_payload(self):
         req = ArtifactGenerateRequest()
         assert req.context is None
+        assert req.content_id is None
+
+    def test_artifact_generate_request_accepts_selected_content(self):
+        req = ArtifactGenerateRequest(context="Focus on the selected card", content_id="kb:kerala")
+        assert req.context == "Focus on the selected card"
+        assert req.content_id == "kb:kerala"
 
     def test_artifact_generate_request_rejects_long_context(self):
         with pytest.raises(ValidationError):

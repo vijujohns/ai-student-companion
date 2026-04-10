@@ -4,12 +4,14 @@ Handles local & cloud models for Brain Teaser
 """
 
 import os
+import re
 import time
 import threading
 from datetime import datetime, UTC
 from typing import Any, Dict, List, Optional
 from ..core.config_loader import get_default_model_profile, get_model_config, get_model_profiles_config, get_task_model
-from ..core.debug_logger import dlog, derror
+from .query_classifier import classify_query as shared_classify_query
+from ..core.debug_logger import dlog, derror, dwarn
 from .db import get_connection
 
 try:
@@ -74,8 +76,22 @@ CLOUD_MODELS = {
         "provider": "openai",
         "model_name": "gpt-3.5-turbo",
         "max_tokens": 500,
-        "temperature": 0.7
-    }
+        "temperature": 0.7,
+    },
+    "groq-llama-fast": {
+        "type": "cloud",
+        "provider": "groq",
+        "model_name": "llama-3.1-8b-instant",
+        "max_tokens": 500,
+        "temperature": 0.3,
+    },
+    "groq-llama-quality": {
+        "type": "cloud",
+        "provider": "groq",
+        "model_name": "llama-3.3-70b-versatile",
+        "max_tokens": 700,
+        "temperature": 0.2,
+    },
 }
 
 # -------------------------
@@ -150,6 +166,21 @@ DEFAULT_MODEL_PROFILES: Dict[str, Dict[str, Any]] = {
             "quiz": "mistral-7b",
             "flashcards": "mistral-7b",
             "summary": "mistral-7b",
+        },
+    },
+    "groq-cloud": {
+        "label": "Groq cloud",
+        "description": "Use Groq-hosted Llama models for cloud-based responses across all study tasks.",
+        "task_models": {
+            "qa": "groq-llama-fast",
+            "lesson": "groq-llama-quality",
+            "quiz": "groq-llama-fast",
+            "flashcards": "groq-llama-fast",
+            "summary": "groq-llama-quality",
+            "assessment": "groq-llama-fast",
+            "math": "groq-llama-quality",
+            "translation": "groq-llama-fast",
+            "explorer": "groq-llama-fast",
         },
     },
 }
@@ -338,32 +369,261 @@ def get_llm_instance(model_config):
 # -------------------------
 # Prompt Builder
 # -------------------------
-def build_prompt(context, query, history, task):
-    normalized_task = str(task or "qa").strip().lower() or "qa"
+def detect_question_type(query: str) -> str:
+    return shared_classify_query(query)
 
-    if normalized_task in {"qa", "lesson"}:
-        return f"""
-You are an AI tutor helping a student based ONLY on the provided study material.
 
-STRICT RULES (MUST FOLLOW):
-1. Answer ONLY from the provided context.
-2. Do NOT use outside knowledge or guess.
-3. If the answer is not present in the context, say EXACTLY:
-   "I don't have enough information in the provided material."
-4. Explain step-by-step like a teacher, using short examples from the context when available.
-5. Keep the answer clear, grounded, and student-friendly.
-6. When helpful, cite the section used, for example `(Chunk 2)`.
+def detect_mode(query: str, question_type: Optional[str] = None) -> str:
+    normalized = " ".join(str(query or "").strip().lower().split())
+    resolved_question_type = str(question_type or detect_question_type(query)).strip().lower() or "general"
+    if resolved_question_type in {"fact", "quote", "summary_structured"}:
+        return "direct"
 
+    if any(phrase in normalized for phrase in ("just answer", "direct answer", "give me the answer", "final answer")):
+        return "direct"
+    if any(phrase in normalized for phrase in ("solve", "step by step", "help me", "teach me")):
+        return "guided"
+    return "direct"
+
+
+def _qa_prompt_style_rules(question_type: str, mode: str) -> str:
+    normalized_type = str(question_type or "general").strip().lower() or "general"
+    normalized_mode = str(mode or "direct").strip().lower() or "direct"
+
+    if normalized_mode == "guided" and normalized_type not in {"fact", "quote"}:
+        return """
+GUIDED TUTOR MODE (MANDATORY):
+- Explain step-by-step like a teacher.
+- Do NOT give the full answer immediately.
+- Break the problem into 3-5 short steps max.
+- Ask one small question at each step.
+- Give hints before giving the final answer.
+- Encourage reasoning.
+- End with: 'Now you try a similar problem!'
+
+Use this structure:
+Step 1:
+- Briefly explain the first move
+- Ask a small question
+
+Step 2:
+- Build on the previous step
+- Ask the next question
+
+Final Step:
+- Reveal the full solution clearly
+"""
+
+    if normalized_type == "quote":
+        return """
+QUOTE QUESTION STYLE (MANDATORY):
+- Return the exact line or sentence from the context when available.
+- Keep the answer to 1-3 lines.
+- Do NOT paraphrase unless the quote is incomplete.
+- If the exact wording is not clearly present, say exactly: 'This is not clearly mentioned in the provided material.'
+"""
+
+    if normalized_type == "fact":
+        return """
+FACT QUESTION STYLE (MANDATORY):
+- Answer in 1-3 lines only.
+- Give the direct answer first.
+- Quote the exact sentence from the context if available.
+- Do NOT add Key Points, Summary, or long explanations.
+"""
+
+    if normalized_type == "definition":
+        return """
+DEFINITION STYLE (MANDATORY):
+- Give a short explanation in 2-4 lines.
+- Keep it simple and clear.
+- Use your own words.
+- Add one small example only if it helps.
+"""
+
+    if normalized_type == "list":
+        return """
+LIST QUESTION STYLE (MANDATORY):
+- Answer as 4-6 concise bullet points.
+- Keep each bullet to one short complete line.
+- If useful, use `Term: short explanation` format, for example `Frequency: number of vibrations per second`.
+- Do NOT return broken fragments or continuation bullets.
+- Include only the most important characteristics, parts, or types.
+- Do NOT add unrelated examples unless asked.
+- Avoid long paragraphs.
+"""
+
+    if normalized_type in {"explanation", "math"}:
+        return """
+EXPLANATION STYLE (MANDATORY):
+- Explain step-by-step like a teacher.
+- Use your own words for explanations.
+- Use this structure:
+  Title
+  Simple Explanation (2-4 lines)
+  Key Points:
+  - bullet points
+  Example:
+  - practical example if available
+  Summary:
+  - 1-2 lines
+"""
+
+    return """
+GENERAL STYLE:
+- Give a short, clean, readable answer.
+- Use bullets only when they improve clarity.
+- Avoid repetition or unrelated details.
+"""
+
+
+def build_structured_summary_prompt(context, query, history, *, has_context: bool = True) -> tuple[str, str]:
+    if has_context:
+        system_prompt = """
+You are an AI Tutor preparing structured revision notes.
+
+STRUCTURED SUMMARY MODE (MANDATORY):
+- Use ONLY the provided context.
+- Produce clean textbook-style notes, not one long paragraph.
+- Start with: `## 📘 <Topic Title>`.
+- Then include these sections in order:
+  `### Overview`
+  `### Key Points`
+  `### Section Notes` (use short subheadings when helpful)
+  `### Final Takeaways`
+- Use a markdown table only if the context contains comparable items.
+- Keep the overview to 2-3 short lines.
+- Keep bullets concise and revision-friendly.
+- Do NOT mention chunk numbers, provided material, or OCR noise.
+""".strip()
+        user_prompt = f"""
+Recent conversation:
+{history}
+
+Create a structured revision summary for the topic below using ONLY the provided context.
+
+Context:
 {context}
 
 Question:
 {query}
 
+Structured Summary:
+""".strip()
+        return system_prompt, user_prompt
+
+    system_prompt = """
+You are an AI Tutor preparing structured revision notes.
+
+STRUCTURED SUMMARY MODE (MANDATORY):
+- Answer using reliable general knowledge.
+- Produce clean textbook-style notes, not one long paragraph.
+- Start with: `## 📘 <Topic Title>`.
+- Then include these sections in order:
+  `### Overview`
+  `### Key Points`
+  `### Section Notes` (use short subheadings when helpful)
+  `### Final Takeaways`
+- Use a markdown table only if the topic naturally compares multiple items.
+- Keep the overview to 2-3 short lines.
+- Keep bullets concise and revision-friendly.
+- Do NOT mention missing context, provided material, or chunk numbers.
+""".strip()
+    user_prompt = f"""
+Recent conversation:
+{history}
+
+Create structured revision notes for:
+{query}
+
+Structured Summary:
+""".strip()
+    return system_prompt, user_prompt
+
+
+def _build_prompt_parts(context, query, history, task, question_type: Optional[str] = None, mode: Optional[str] = None) -> tuple[str, str]:
+    normalized_task = str(task or "qa").strip().lower() or "qa"
+    has_context = bool(str(context or "").strip())
+    resolved_question_type = str(question_type or detect_question_type(query)).strip().lower() or "general"
+    resolved_mode = str(mode or detect_mode(query, resolved_question_type)).strip().lower() or "direct"
+
+    if resolved_question_type == "summary_structured":
+        return build_structured_summary_prompt(context, query, history, has_context=has_context)
+
+    if normalized_task in {"qa", "lesson"}:
+        style_rules = _qa_prompt_style_rules(resolved_question_type, resolved_mode).strip()
+        if has_context:
+            system_prompt = """
+You are an AI Tutor.
+
+Rules:
+- Answer ONLY from the provided context.
+- Answer ONLY using the provided context.
+- Do NOT hallucinate or guess.
+- If the answer is not clearly present, say exactly: 'This is not clearly mentioned in the provided material.'
+- Do NOT mention chunk numbers.
+- Do NOT repeat content.
+- Avoid irrelevant information.
+- Keep answers clean and readable.
+- Ignore boilerplate like Document:, Source:, Page labels, OCR fragments, or chunk headers.
+- Do not copy raw chunks verbatim unless the student asks for a quote.
+- Use your own words for explanations.
+""".strip()
+            user_prompt = f"""
+Recent conversation:
+{history}
+
+Avoid:
+- repetition
+- long paragraphs
+- irrelevant details
+- mixing unrelated concepts (example: pie vs π)
+
+{style_rules}
+
+Use ONLY the provided context below.
+
+{context}
+
+Question type: {resolved_question_type}
+Tutor mode: {resolved_mode}
+
+Question:
+{query}
+
 Answer:
-"""
+""".strip()
+            return system_prompt, user_prompt
+
+        system_prompt = """
+You are an AI Tutor.
+
+Rules:
+- Answer clearly and helpfully using reliable general knowledge.
+- Do NOT mention missing context, chunk numbers, or provided material.
+- Do NOT repeat content.
+- Avoid irrelevant information.
+- Keep answers clean and readable.
+- Use your own words for explanations.
+""".strip()
+        user_prompt = f"""
+Recent conversation:
+{history}
+
+{style_rules}
+
+Question type: {resolved_question_type}
+Tutor mode: {resolved_mode}
+
+Question:
+{query}
+
+Answer:
+""".strip()
+        return system_prompt, user_prompt
 
     if normalized_task == "summary":
-        return f"""
+        system_prompt = """
 You are summarizing ONLY the provided study material.
 
 STRICT RULES (MUST FOLLOW):
@@ -372,17 +632,19 @@ STRICT RULES (MUST FOLLOW):
 3. Do NOT add outside facts.
 4. If the context is insufficient, say EXACTLY:
    "I don't have enough information in the provided material."
-
+""".strip()
+        user_prompt = f"""
 {context}
 
 Request:
 {query}
 
 Summary:
-"""
+""".strip()
+        return system_prompt, user_prompt
 
     if normalized_task == "quiz":
-        return f"""
+        system_prompt = """
 You are generating quiz content ONLY from the provided study material.
 
 STRICT RULES (MUST FOLLOW):
@@ -390,17 +652,83 @@ STRICT RULES (MUST FOLLOW):
 2. Every answer must match the provided context exactly.
 3. Do NOT invent facts outside the context.
 4. If the context is insufficient, return the safest possible grounded output.
-
+""".strip()
+        user_prompt = f"""
 {context}
 
 Instructions:
 {query}
 
 Quiz Output:
-"""
+""".strip()
+        return system_prompt, user_prompt
 
-    return f"{history}\nContext:\n{context}\nQuestion:\n{query}\nAnswer:"
+    return "You are a helpful assistant.", f"{history}\nContext:\n{context}\nQuestion:\n{query}\nAnswer:"
 
+
+def build_prompt(context, query, history, task, question_type: Optional[str] = None, mode: Optional[str] = None):
+    system_prompt, user_prompt = _build_prompt_parts(context, query, history, task, question_type=question_type, mode=mode)
+    return f"{system_prompt}\n\n{user_prompt}".strip()
+
+
+def _resolve_generation_params(model_config: Dict[str, Any], query: str, task: str) -> tuple[float, int, str]:
+    normalized_task = str(task or "qa").strip().lower() or "qa"
+    question_type = detect_question_type(query)
+    base_temperature = float(model_config.get("temperature", 0.3) or 0.3)
+    base_max_tokens = int(model_config.get("max_tokens", 300) or 300)
+
+    if question_type == "summary_structured":
+        return min(base_temperature, 0.15), 600, question_type
+
+    if normalized_task not in {"qa", "lesson", "math"}:
+        return base_temperature, base_max_tokens, question_type
+
+    if question_type in {"fact", "quote"}:
+        return min(base_temperature, 0.10), min(base_max_tokens, 120), question_type
+    if question_type == "definition":
+        return min(base_temperature, 0.15), min(base_max_tokens, 180), question_type
+    if question_type == "list":
+        return min(base_temperature, 0.15), min(max(base_max_tokens, 160), 220), question_type
+    if question_type in {"explanation", "math"}:
+        return min(base_temperature, 0.20), min(max(base_max_tokens, 220), 320), question_type
+    return min(base_temperature, 0.20), min(base_max_tokens, 220), question_type
+
+
+
+def _cloud_provider_env_key(provider: str) -> Optional[str]:
+    normalized = str(provider or "").strip().lower()
+    return {
+        "openai": "OPENAI_API_KEY",
+        "groq": "GROQ_API_KEY",
+    }.get(normalized)
+
+
+def _build_cloud_runtime_config(model_config: Dict[str, Any]) -> Dict[str, Any]:
+    provider = str(model_config.get("provider") or "openai").strip().lower() or "openai"
+    api_key_env = _cloud_provider_env_key(provider)
+    if not api_key_env:
+        raise ValueError(f"Unsupported cloud provider: {provider}")
+
+    defaults = {
+        "openai": {
+            "base_url": str(os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").strip(),
+            "timeout": float(os.getenv("OPENAI_TIMEOUT_SECONDS", "60")),
+        },
+        "groq": {
+            "base_url": str(os.getenv("GROQ_BASE_URL") or "https://api.groq.com/openai/v1").strip(),
+            "timeout": float(os.getenv("GROQ_TIMEOUT_SECONDS", "60")),
+        },
+    }
+
+    runtime = defaults[provider]
+    api_key = str(os.getenv(api_key_env, "") or "").strip()
+    return {
+        "provider": provider,
+        "api_key_env": api_key_env,
+        "api_key": api_key,
+        "base_url": runtime["base_url"],
+        "timeout": runtime["timeout"],
+    }
 
 
 def is_model_available(model_name: str) -> bool:
@@ -412,7 +740,10 @@ def is_model_available(model_name: str) -> bool:
         return False
 
     if model_config.get("type") != "local":
-        return True
+        try:
+            return bool(_build_cloud_runtime_config(model_config).get("api_key"))
+        except Exception:
+            return False
 
     try:
         _resolve_model_path(model_config)
@@ -453,6 +784,27 @@ def resolve_model_name(model_name: Optional[str], task: str, query: str, context
             dlog("MODEL", "Requested model unavailable; using fallback", requested=requested, selected=selected, task=normalized_task)
         return selected
     return decide_model(normalized_task, query, context)
+
+
+def _emit_selection_trace(task: str, model_name: str, model_config: Dict[str, Any], context: str, query: str) -> None:
+    normalized_task = str(task or "qa").strip().lower() or "qa"
+    provider = str(model_config.get("provider") or "local").strip().lower() or "local"
+    context_text = str(context or "").strip()
+    query_preview = str(query or "").strip().replace("\n", " ")
+    if len(query_preview) > 120:
+        query_preview = query_preview[:117] + "..."
+
+    dwarn(
+        "MODEL",
+        "Model selected for current task",
+        task=normalized_task,
+        profile=get_active_model_profile_key(),
+        model=model_name,
+        provider=provider,
+        context_mode="grounded" if context_text else "none",
+        context_chars=len(context_text),
+        query=query_preview or None,
+    )
 
 
 def decide_model(task: str, query: str, context: str = "") -> str:
@@ -506,19 +858,22 @@ def generate_response(context: str, query: str, history: str = "", model_name: s
     model_config = get_model_config(model_name)
     if not model_config:
         raise ValueError(f"Unknown model configuration: {model_name}")
-    prompt = build_prompt(context, query, history, task)
+    temperature, max_tokens, question_type = _resolve_generation_params(model_config, query, task)
+    system_prompt, user_prompt = _build_prompt_parts(context, query, history, task, question_type=question_type)
+    prompt = build_prompt(context, query, history, task, question_type=question_type)
 
     dlog("MODEL", "generate_response",
          model=model_name,
          task=task,
          model_type=model_config.get("type", "?"),
-         max_tokens=model_config.get("max_tokens"),
-         temperature=model_config.get("temperature"),
+         max_tokens=max_tokens,
+         temperature=temperature,
          n_ctx=model_config.get("n_ctx"),
          context_chars=len(context),
          history_chars=len(history),
          prompt_chars=len(prompt),
          prompt_preview=prompt[:200].replace("\n", " "))
+    _emit_selection_trace(task, model_name, model_config, context, query)
 
     # -------- LOCAL --------
     if model_config["type"] == "local":
@@ -530,8 +885,8 @@ def generate_response(context: str, query: str, history: str = "", model_name: s
             with lock:
                 output = llm(
                     prompt,
-                    max_tokens=model_config.get("max_tokens", 300),
-                    temperature=model_config.get("temperature", 0.7),
+                    max_tokens=max_tokens,
+                    temperature=temperature,
                     stop=["Question:", "---------------------", "</s>"]
                 )
             elapsed = (time.perf_counter() - t0) * 1000
@@ -548,34 +903,72 @@ def generate_response(context: str, query: str, history: str = "", model_name: s
 
     # -------- CLOUD --------
     elif model_config["type"] == "cloud":
-        if model_config["provider"] == "openai":
+        provider = str(model_config.get("provider") or "").strip().lower()
+        if provider in {"openai", "groq"}:
             if not openai:
                 raise ImportError("openai package not installed")
 
-            openai.api_key = os.getenv("OPENAI_API_KEY")
-            dlog("MODEL", "Calling OpenAI cloud model",
-                 model=model_config["model_name"],
-                 max_tokens=model_config.get("max_tokens", 500),
-                 temperature=model_config.get("temperature", 0.7))
+            runtime = _build_cloud_runtime_config(model_config)
+            if not runtime["api_key"]:
+                derror(
+                    "MODEL",
+                    f"Cloud provider key missing: {runtime['api_key_env']}",
+                    provider=provider,
+                    model=model_config["model_name"],
+                    task=task,
+                )
+                return _safe_generation_fallback(task)
+
+            provider_label = "Groq" if provider == "groq" else "OpenAI"
+            dlog(
+                "MODEL",
+                f"Calling {provider_label} cloud model",
+                provider=provider,
+                model=model_config["model_name"],
+                base_url=runtime["base_url"],
+                max_tokens=model_config.get("max_tokens", 500),
+                temperature=model_config.get("temperature", 0.7),
+            )
             t0 = time.perf_counter()
             try:
-                response = openai.chat.completions.create(
-                    model=model_config["model_name"],
-                    messages=[{"role": "user", "content": prompt}],
-                    max_tokens=model_config.get("max_tokens", 500),
-                    temperature=model_config.get("temperature", 0.7),
-                    timeout=float(os.getenv("OPENAI_TIMEOUT_SECONDS", "60")),
-                )
+                client_factory = getattr(openai, "OpenAI", None)
+                if callable(client_factory):
+                    client = client_factory(api_key=runtime["api_key"], base_url=runtime["base_url"])
+                    response = client.chat.completions.create(
+                        model=model_config["model_name"],
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        timeout=runtime["timeout"],
+                    )
+                else:
+                    openai.api_key = runtime["api_key"]
+                    if hasattr(openai, "base_url"):
+                        openai.base_url = runtime["base_url"]
+                    response = openai.chat.completions.create(
+                        model=model_config["model_name"],
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        timeout=runtime["timeout"],
+                    )
                 elapsed = (time.perf_counter() - t0) * 1000
                 result = response.choices[0].message.content.strip()
                 dlog("MODEL", "Cloud model response",
+                     provider=provider,
                      model=model_config["model_name"],
                      elapsed_ms=f"{elapsed:.1f}ms",
                      response_chars=len(result),
                      response_preview=result[:100])
                 return result
             except Exception as exc:
-                derror("MODEL", f"Cloud generation failed: {exc}", model=model_config["model_name"], task=task)
+                derror("MODEL", f"Cloud generation failed: {exc}", provider=provider, model=model_config["model_name"], task=task)
                 return _safe_generation_fallback(task)
 
     raise ValueError("Unsupported model")
@@ -593,17 +986,19 @@ def generate_response_stream(context: str, query: str, history: str = "", model_
     model_config = get_model_config(model_name)
     if not model_config:
         raise ValueError(f"Unknown model configuration: {model_name}")
-    prompt = build_prompt(context, query, history, task)
+    temperature, max_tokens, question_type = _resolve_generation_params(model_config, query, task)
+    prompt = build_prompt(context, query, history, task, question_type=question_type)
 
     dlog("MODEL", "generate_response_stream",
          model=model_name,
          task=task,
          model_type=model_config.get("type", "?"),
-         max_tokens=model_config.get("max_tokens"),
-         temperature=model_config.get("temperature"),
+         max_tokens=max_tokens,
+         temperature=temperature,
          context_chars=len(context),
          prompt_chars=len(prompt),
          prompt_preview=prompt[:200].replace("\n", " "))
+    _emit_selection_trace(task, model_name, model_config, context, query)
 
     if model_config["type"] == "local":
         model_path = _resolve_model_path(model_config)
@@ -616,8 +1011,8 @@ def generate_response_stream(context: str, query: str, history: str = "", model_
             with lock:
                 stream = llm(
                     prompt,
-                    max_tokens=model_config.get("max_tokens", 300),
-                    temperature=model_config.get("temperature", 0.7),
+                    max_tokens=max_tokens,
+                    temperature=temperature,
                     stop=["Question:", "---------------------", "</s>"],
                     stream=True
                 )

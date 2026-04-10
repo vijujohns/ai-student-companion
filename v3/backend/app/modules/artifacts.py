@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 
 from .db import get_connection
 from .model_manager import generate_response
+from .quiz import _extract_quiz_json, _normalize_questions
 
 
 def _save_artifact(
@@ -34,6 +35,27 @@ def _save_artifact(
     return artifact_id
 
 
+def _build_card_context_text(card: Dict) -> str:
+    sections: List[str] = []
+
+    content = str(card.get("content") or "").strip()
+    if content:
+        sections.append(content)
+
+    bullets = [str(item).strip() for item in (card.get("bullets") or []) if str(item).strip()]
+    if bullets:
+        sections.append("Key points:\n" + "\n".join(f"- {item}" for item in bullets[:6]))
+
+    numbered = [str(item).strip() for item in (card.get("numbered") or []) if str(item).strip()]
+    if numbered:
+        sections.append("Ordered prompts:\n" + "\n".join(f"{idx}. {item}" for idx, item in enumerate(numbered[:6], start=1)))
+
+    if not sections:
+        sections.append(str(card.get("title") or "Lesson card").strip() or "Lesson card")
+
+    return "\n\n".join(sections)
+
+
 def generate_card_quiz(
     user_id: str,
     card: Dict,
@@ -41,51 +63,50 @@ def generate_card_quiz(
     context_hint: Optional[str] = None,
     selected_content: Optional[str] = None,
 ) -> Dict:
-    context = card.get("content") or card.get("title")
+    context = _build_card_context_text(card)
     prompt = f"""
-Generate {num_questions} quiz questions from the card context.
-Return strict JSON:
+Create {num_questions} multiple-choice quiz questions using ONLY the lesson card context.
+Return ONLY valid JSON:
 {{
   "questions": [
-    {{"id":"q1", "question":"...", "options":["A","B","C","D"], "correct_option":"A"}}
+    {{"id":"q1", "question":"...", "options":["...","...","...","..."], "correct_answer":"A", "explanation":"..."}}
   ]
 }}
+RULES:
+- Every question must be answerable from the lesson card only.
+- Always include exactly 4 options.
+- Always include correct_answer and explanation.
+- Do not add commentary outside the JSON.
+
 Preferred quiz focus (optional):
 {(context_hint or '').strip() or 'No special focus provided.'}
 
-Card context:
+Lesson card title:
+{card.get('title', 'Lesson card')}
+
+Lesson card context:
 {context}
 """
 
-    questions = []
     try:
         raw = generate_response(context=context, query=prompt, task="quiz")
-        parsed = json.loads(raw)
-        for idx, q in enumerate(parsed.get("questions", [])[:num_questions], start=1):
-            options = q.get("options") if isinstance(q.get("options"), list) else ["A", "B", "C", "D"]
-            questions.append(
-                {
-                    "id": q.get("id") or f"q{idx}",
-                    "question": q.get("question", f"Question {idx}"),
-                    "options": options,
-                    "correct_option": q.get("correct_option") or q.get("answer", "A"),
-                }
-            )
+        parsed = _extract_quiz_json(raw)
     except Exception:
-        questions = []
+        parsed = {"questions": []}
 
-    while len(questions) < num_questions:
-        idx = len(questions) + 1
-        questions.append(
-            {
-                "id": f"q{idx}",
-                "question": f"Practice question {idx} based on {card.get('title', 'this card')}",
-                "options": ["A", "B", "C", "D"],
-                "correct_option": "A",
-            }
-        )
+    questions = _normalize_questions(
+        parsed.get("questions", []),
+        num_questions=num_questions,
+        fallback_context=context,
+        chapter=str(card.get("title") or "Lesson card"),
+    )
 
-    payload = {"quiz": questions, "generated_at": datetime.now(UTC).isoformat()}
+    payload = {
+        "quiz": questions,
+        "generated_at": datetime.now(UTC).isoformat(),
+        "selected_content": selected_content,
+        "context_source": "lesson_card",
+    }
     artifact_id = _save_artifact(
         user_id=user_id,
         session_id=card.get("session_id"),

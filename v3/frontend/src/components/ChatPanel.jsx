@@ -65,7 +65,9 @@ import ProgressPanel from "./ProgressPanel";
 import RoleHubPanel from "./RoleHubPanel";
 import AdminPanel from "./AdminPanel";
 import MessageContent from "./MessageContent";
+import NotesPanel from "./NotesPanel";
 import QuizPanel from "./QuizPanel";
+import SummaryViewer, { looksLikeStructuredSummary } from "./SummaryViewer";
 import VoiceControl from "./VoiceControl";
 import LanguagePicker from "./LanguagePicker";
 import ProfilePanel from "./ProfilePanel";
@@ -124,6 +126,11 @@ function getActivePanelMeta(activeTab, userRole = "student") {
         title: "Assignments",
         description: "Review teacher tasks, watch due dates, and jump directly into the next required activity.",
       };
+    case "notes":
+      return {
+        title: "Notes",
+        description: "Review saved summaries, polish revision notes, and keep key study points in one place.",
+      };
     case "progress":
       return {
         title: "Progress",
@@ -171,6 +178,7 @@ function getWorkspaceNavSections(userRole = "student", actualUserRole = userRole
     const previewTabs = normalizedRole === "teacher"
       ? [
         buildTab("roles", "Teacher Hub", FiUser, "Teacher Hub"),
+        buildTab("notes", "Notes", FiBookOpen),
         buildTab("assignments", "Assignments", FiCheck),
         buildTab("progress", "Progress", FiBarChart2),
         buildTab("assessment", "Assessment", FiEdit),
@@ -178,12 +186,14 @@ function getWorkspaceNavSections(userRole = "student", actualUserRole = userRole
       : normalizedRole === "parent"
         ? [
           buildTab("roles", "Family Hub", FiUser, "Family Hub"),
+          buildTab("notes", "Notes", FiBookOpen),
           buildTab("assignments", "Assignments", FiCheck),
           buildTab("progress", "Progress", FiBarChart2),
         ]
         : normalizedRole === "student"
           ? [
             buildTab("chat", "Chat Workspace", FiMessageSquare, "Chat"),
+            buildTab("notes", "Notes Workspace", FiBookOpen, "Notes"),
             buildTab("lesson", "Lesson Workspace", FiBook, "Lesson"),
             buildTab("quiz", "Quiz Workspace", FiClipboard, "Quiz"),
             buildTab("flashcards", "Cards Workspace", FiLayers, "Cards"),
@@ -193,6 +203,7 @@ function getWorkspaceNavSections(userRole = "student", actualUserRole = userRole
           : [
             buildTab("roles", "Role Hub", FiUser, "Role Hub"),
             buildTab("chat", "Chat Workspace", FiMessageSquare, "Chat"),
+            buildTab("notes", "Notes Workspace", FiBookOpen, "Notes"),
             buildTab("lesson", "Lesson Workspace", FiBook, "Lesson"),
             buildTab("quiz", "Quiz Workspace", FiClipboard, "Quiz"),
             buildTab("flashcards", "Cards Workspace", FiLayers, "Cards"),
@@ -222,6 +233,7 @@ function getWorkspaceNavSections(userRole = "student", actualUserRole = userRole
         title: "Teaching tools",
         tabs: [
           buildTab("roles", "Teacher Hub", FiShield),
+          buildTab("notes", "Notes", FiBookOpen),
           buildTab("assignments", "Assignments", FiCheck),
           buildTab("progress", "Progress", FiBarChart2),
           buildTab("assessment", "Assessment", FiEdit),
@@ -237,6 +249,7 @@ function getWorkspaceNavSections(userRole = "student", actualUserRole = userRole
         title: "Family tools",
         tabs: [
           buildTab("roles", "Family Hub", FiShield),
+          buildTab("notes", "Notes", FiBookOpen),
           buildTab("assignments", "Assignments", FiCheck),
           buildTab("progress", "Progress", FiBarChart2),
         ],
@@ -251,6 +264,7 @@ function getWorkspaceNavSections(userRole = "student", actualUserRole = userRole
         title: "Admin tools",
         tabs: [
           buildTab("roles", "Admin Hub", FiShield),
+          buildTab("notes", "Notes", FiBookOpen),
           buildTab("progress", "Progress", FiBarChart2),
         ],
       },
@@ -263,6 +277,7 @@ function getWorkspaceNavSections(userRole = "student", actualUserRole = userRole
       title: "Study tools",
       tabs: [
         buildTab("chat", "Chat Workspace", FiMessageSquare, "Chat"),
+        buildTab("notes", "Notes Workspace", FiBookOpen, "Notes"),
         buildTab("lesson", "Lesson Workspace", FiBook, "Lesson"),
         buildTab("quiz", "Quiz Workspace", FiClipboard, "Quiz"),
         buildTab("flashcards", "Cards Workspace", FiLayers, "Cards"),
@@ -580,7 +595,7 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
   const chatComposerRef = useRef(null);
   const fileInputRef = useRef(null);
   const currentStreamRef = useRef("");
-  const currentStreamMetaRef = useRef({ messageId: null, level: null });
+  const currentStreamMetaRef = useRef({ messageId: null, level: null, quickReplies: [] });
   const isStreamingRef = useRef(false);
   const sessionIdRef = useRef(sessionId);
   const autoSpeakRef = useRef(autoSpeak);
@@ -1416,6 +1431,7 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
         clearStreamWatchdog();
         clearStreamStallHint();
         const finalText = currentStreamRef.current;
+        const finalMeta = currentStreamMetaRef.current;
         const wasExpected = pendingResponseRef.current;
         pendingResponseRef.current = false;
         activeStreamSessionRef.current = null;
@@ -1429,7 +1445,7 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
         if (shouldCommitCompletedStream(finalText, wasExpected)) {
           setMessages((prev) => [
             ...prev,
-            buildCompletedStreamMessage(finalText, currentStreamMetaRef.current),
+            buildCompletedStreamMessage(finalText, finalMeta),
           ]);
           if (autoSpeakRef.current && shouldSpeakText(finalText)) {
             speakText(finalText);
@@ -1454,6 +1470,12 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
 
       armStreamStallHint();
       armStreamWatchdog(activeStreamSessionRef.current || sessionIdRef.current);
+
+      if (payload.replaceText) {
+        setCurrentStream(payload.text);
+        currentStreamRef.current = payload.text;
+        return;
+      }
 
       setCurrentStream((prev) => {
         const next = prev + payload.text;
@@ -2419,7 +2441,17 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
               {messages.map((msg, index) => (
                 <div key={index} className={`message-row ${msg.type}`}>
                   <div className="message-bubble">
-                    <MessageContent content={translatedMessages[index] || msg.text} />
+                    {msg.type === "ai" && looksLikeStructuredSummary(msg.text) ? (
+                      <SummaryViewer
+                        content={translatedMessages[index] || msg.text}
+                        sourceQuery={index > 0 && messages[index - 1]?.type === "user" ? messages[index - 1].text : ""}
+                        sessionId={sessionId}
+                        selectedContent={selectedContent}
+                        onOpenNotes={() => handleWorkspaceTabSelect("notes")}
+                      />
+                    ) : (
+                      <MessageContent content={translatedMessages[index] || msg.text} />
+                    )}
                     {msg.type === "ai" && preferredLanguage !== "en" && (
                       <button
                         type="button"
@@ -2432,6 +2464,26 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
                         <FiGlobe aria-hidden="true" />
                         <span>{translatingId === index ? "…" : translatedMessages[index] ? "Original" : "Translate"}</span>
                       </button>
+                    )}
+                    {msg.type === "ai" && Array.isArray(msg.quickReplies) && msg.quickReplies.length > 0 && (
+                      <div className="message-quick-replies">
+                        {msg.quickReplies.map((reply, replyIndex) => {
+                          const label = String(reply?.label ?? reply?.value ?? reply ?? "").trim();
+                          const value = String(reply?.value ?? reply?.label ?? reply ?? "").trim();
+                          if (!label || !value) return null;
+                          return (
+                            <button
+                              key={`${index}-${replyIndex}-${value}`}
+                              type="button"
+                              className="secondary-button message-quick-reply"
+                              onClick={() => handleSend(value)}
+                              disabled={isStreaming}
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
                     )}
                     {(msg.level || msg.messageId) && (
                       <div className="message-meta">
@@ -2590,6 +2642,7 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
                 prefilledQuizData={planActionPrefill.quiz.generatedPayload}
                 chapterOptions={chapterOptions}
                 currentContextLabel={currentContextLabel}
+                selectedContentId={selectedContent || null}
                 hasLinkedContent={Boolean(selectedContent)}
                 isContextViewerVisible={shouldShowViewer}
                 onOpenContext={() => setIsViewerVisible(true)}
@@ -2634,6 +2687,10 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
                 autoRunToken={planActionPrefill.assessment.autoRunToken}
               />
             )}
+          </div>
+
+          <div style={{ display: activeTab === "notes" ? "flex" : "none", flex: 1, minHeight: 0 }}>
+            <NotesPanel isActive={activeTab === "notes"} />
           </div>
 
           <div style={{ display: activeTab === "assignments" ? "flex" : "none", flex: 1, minHeight: 0 }}>

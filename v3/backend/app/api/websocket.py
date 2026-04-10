@@ -124,12 +124,14 @@ async def websocket_ask(ws: WebSocket):
                 model_name = payload.get("model_name")
                 context_id = payload.get("context_id")
                 requested_task = payload.get("task") or payload.get("mode")
+                bypass_cache = bool(payload.get("bypass_cache", False))
             except Exception:
                 query = data
                 session_id = "default"
                 model_name = None
                 context_id = None
                 requested_task = None
+                bypass_cache = False
 
             dlog("WS", "Query received /ws/ask",
                  user=user["username"],
@@ -195,6 +197,7 @@ async def websocket_ask(ws: WebSocket):
                         session_id,
                         model_name,
                         session_content_override=context_id,
+                        bypass_cache=bypass_cache,
                     )
                 else:
                     stream_source = generate_answer_stream(
@@ -204,10 +207,15 @@ async def websocket_ask(ws: WebSocket):
                         model_name=model_name,
                         session_content_override=context_id,
                         task=routed_task.model_task,
+                        bypass_cache=bypass_cache,
                     )
 
                 async for token in async_stream_wrapper(stream_source):
-                    full_response += token
+                    payload_text = token.get("text", "") if isinstance(token, dict) else str(token)
+                    if isinstance(token, dict) and token.get("replaceText"):
+                        full_response = payload_text
+                    else:
+                        full_response += payload_text
                     token_count += 1
                     if not await send_json(ws, {"type": "chunk", "data": token}):
                         break

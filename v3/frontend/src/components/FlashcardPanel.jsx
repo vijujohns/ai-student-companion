@@ -38,6 +38,7 @@ export default function FlashcardPanel({
   const [selectedCardId, setSelectedCardId] = useState("");
   const [artifact, setArtifact] = useState(null);
   const [meta, setMeta] = useState({ title: "", tags: "" });
+  const [flippedCards, setFlippedCards] = useState({});
   const [loading, setLoading] = useState(false);
   const [loadingPhase, setLoadingPhase] = useState(0);
   const [error, setError] = useState("");
@@ -56,6 +57,14 @@ export default function FlashcardPanel({
   const resetArtifactState = useCallback(() => {
     setArtifact(null);
     setMeta({ title: "", tags: "" });
+    setFlippedCards({});
+  }, []);
+
+  const toggleFlashcard = useCallback((cardKey) => {
+    setFlippedCards((prev) => ({
+      ...prev,
+      [cardKey]: !prev[cardKey],
+    }));
   }, []);
 
   const loadCardsForSession = useCallback(async (sid) => {
@@ -384,6 +393,10 @@ export default function FlashcardPanel({
     return () => clearInterval(timer);
   }, [loading]);
 
+  useEffect(() => {
+    setFlippedCards({});
+  }, [artifact?.artifact_id, artifact?.payload?.flashcards?.length]);
+
   return (
     <div className="workspace-panel quiz-panel">
       <div className="workspace-panel__header">
@@ -547,12 +560,62 @@ export default function FlashcardPanel({
               })()}
 
               <div className="flashcard-grid">
-                {(artifact.payload?.flashcards || []).map((item, index) => (
-                  <div key={`${artifact.artifact_id}-${index}`} className="flashcard-card">
-                    <strong>Q. {item.question || `Card ${index + 1}`}</strong>
-                    <p>{item.answer || "No answer available."}</p>
-                  </div>
-                ))}
+                {(artifact.payload?.flashcards || []).map((item, index) => {
+                  const cardKey = `${artifact.artifact_id || "preview"}-${index}`;
+                  const isFlipped = Boolean(flippedCards[cardKey]);
+                  const questionText = item.question || `Card ${index + 1}`;
+                  const answerText = item.answer || "No answer available.";
+
+                  return (
+                    <div
+                      key={cardKey}
+                      className={`flashcard-card ${isFlipped ? "flashcard-card--flipped" : ""}`}
+                      role="button"
+                      tabIndex={0}
+                      aria-pressed={isFlipped}
+                      onClick={() => toggleFlashcard(cardKey)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          toggleFlashcard(cardKey);
+                        }
+                      }}
+                    >
+                      <div className="flashcard-card__header">
+                        <span className="flashcard-card__badge">{isFlipped ? "Back" : "Front"}</span>
+                        <button
+                          type="button"
+                          className="flashcard-card__flip"
+                          aria-label={`Flip flashcard ${index + 1}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            toggleFlashcard(cardKey);
+                          }}
+                        >
+                          <FiRefreshCw />
+                        </button>
+                      </div>
+
+                      {!isFlipped ? (
+                        <div className="flashcard-card__face flashcard-card__face--front">
+                          <p className="flashcard-card__question">{questionText}</p>
+                          <span className="flashcard-card__hint">Click anywhere to flip</span>
+                        </div>
+                      ) : (
+                        <div className="flashcard-card__face flashcard-card__face--back">
+                          <div className="flashcard-card__section">
+                            <span className="flashcard-card__label">Question</span>
+                            <p className="flashcard-card__question">{questionText}</p>
+                          </div>
+                          <div className="flashcard-card__section">
+                            <span className="flashcard-card__label">Answer</span>
+                            <p className="flashcard-card__answer">{answerText}</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
 
               {artifact.artifact_id && (

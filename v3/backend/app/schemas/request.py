@@ -228,6 +228,7 @@ class AskRequest(BaseModel):
     model_name: Optional[str] = Field(None, max_length=50, description="LLM model to use (optional)")
     task: Optional[str] = Field(None, max_length=50, description="Optional task hint such as qa, summary, lesson, or quiz")
     content_id: Optional[str] = Field(None, min_length=1, max_length=1000, description="Selected content reference (optional)")
+    bypass_cache: bool = Field(False, description="If true, skip response cache lookup and write for this request")
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -236,7 +237,8 @@ class AskRequest(BaseModel):
                 "session_id": "uuid-here",
                 "model_name": "tinyllama",
                 "task": "summary",
-                "content_id": "kb:Q2xhc3MtMTAvQmlvbG9neS9DaGFwdGVyLTUvbm90ZXMucGRm"
+                "content_id": "kb:Q2xhc3MtMTAvQmlvbG9neS9DaGFwdGVyLTUvbm90ZXMucGRm",
+                "bypass_cache": False
             }
         }
     )
@@ -333,13 +335,15 @@ class QuizGenerateRequest(BaseModel):
     session_id: str = Field(..., max_length=100)
     chapter: str = Field(..., min_length=1, max_length=500)
     quiz_context: Optional[str] = Field(None, max_length=1000)
+    content_id: Optional[str] = Field(None, min_length=1, max_length=1000)
 
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "session_id": "uuid-here",
                 "chapter": "Photosynthesis",
-                "quiz_context": "Focus on tricky exam questions and common mistakes"
+                "quiz_context": "Focus on tricky exam questions and common mistakes",
+                "content_id": "kb:Q2xhc3MtMTAvQmlvbG9neS9QaG90b3N5bnRoZXNpcy5wZGY"
             }
         }
     )
@@ -382,6 +386,7 @@ class FlashcardCreateRequest(BaseModel):
 class ArtifactGenerateRequest(BaseModel):
     """Optional context for card-based quiz or flashcard generation"""
     context: Optional[str] = Field(None, max_length=1000)
+    content_id: Optional[str] = Field(None, min_length=1, max_length=1000)
 
 
 class SubscriptionQuoteRequest(BaseModel):
@@ -616,6 +621,66 @@ class AdminModelProfileUpdateRequest(BaseModel):
         if value not in valid:
             raise ValueError(f"Profile key must be one of {sorted(valid)}.")
         return value
+
+
+class NoteSaveRequest(BaseModel):
+    title: Optional[str] = Field(None, max_length=200)
+    content: str = Field(..., min_length=1, max_length=20000)
+    session_id: Optional[str] = Field(None, max_length=100)
+    source_query: Optional[str] = Field(None, max_length=1000)
+    selected_content: Optional[str] = Field(None, min_length=1, max_length=1000)
+    is_pinned: bool = Field(False)
+
+    @field_validator("title")
+    @classmethod
+    def validate_optional_title(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = v.strip()
+        return value or None
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, v: str) -> str:
+        value = v.strip()
+        if not value:
+            raise ValueError("Note content is required.")
+        return value
+
+
+class NoteUpdateRequest(BaseModel):
+    title: Optional[str] = Field(None, max_length=200)
+    content: Optional[str] = Field(None, min_length=1, max_length=20000)
+    source_query: Optional[str] = Field(None, max_length=1000)
+    selected_content: Optional[str] = Field(None, min_length=1, max_length=1000)
+    is_pinned: Optional[bool] = None
+
+    @field_validator("title")
+    @classmethod
+    def validate_update_title(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = v.strip()
+        return value or None
+
+    @field_validator("content")
+    @classmethod
+    def validate_update_content(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = v.strip()
+        if not value:
+            raise ValueError("Note content cannot be empty.")
+        return value
+
+    @model_validator(mode="after")
+    def validate_has_update(self):
+        if not any(
+            getattr(self, field) is not None
+            for field in ("title", "content", "source_query", "selected_content", "is_pinned")
+        ):
+            raise ValueError("Provide at least one field to update.")
+        return self
 
 
 class LinkStudentRequest(BaseModel):

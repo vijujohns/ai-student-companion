@@ -96,6 +96,21 @@
         "flashcards": "mistral-7b",
         "summary": "mistral-7b"
       }
+    },
+    "groq-cloud": {
+      "label": "Groq cloud",
+      "description": "Use Groq-hosted Llama models for cloud-based responses across all study tasks.",
+      "task_models": {
+        "qa": "groq-llama-fast",
+        "lesson": "groq-llama-quality",
+        "quiz": "groq-llama-fast",
+        "flashcards": "groq-llama-fast",
+        "summary": "groq-llama-quality",
+        "assessment": "groq-llama-fast",
+        "math": "groq-llama-quality",
+        "translation": "groq-llama-fast",
+        "explorer": "groq-llama-fast"
+      }
     }
   },
 
@@ -141,6 +156,20 @@
       "model_name": "gpt-3.5-turbo",
       "max_tokens": 500,
       "temperature": 0.7
+    },
+    "groq-llama-fast": {
+      "type": "cloud",
+      "provider": "groq",
+      "model_name": "llama-3.1-8b-instant",
+      "max_tokens": 500,
+      "temperature": 0.3
+    },
+    "groq-llama-quality": {
+      "type": "cloud",
+      "provider": "groq",
+      "model_name": "llama-3.3-70b-versatile",
+      "max_tokens": 700,
+      "temperature": 0.2
     }
   },
 
@@ -153,6 +182,44 @@
     "summary_chunk_size": 2200,
     "summary_chunk_overlap": 250,
     "document_top_k": 8,
-    "use_precomputed_summaries": true
+    "use_precomputed_summaries": true,
+    "formatting": {
+      "formatter_order": ["compare", "list", "explain", "definition"],
+      "intent_patterns": {
+        "compare": [
+          "\\bcompare\\b",
+          "\\bdifference between\\b",
+          "\\bdistinguish between\\b",
+          "\\bcontrast\\b"
+        ],
+        "list": [
+          "^(?:list|name|show)\\b",
+          "^(?:what are|which are)\\b",
+          "\\b(?:parts|types|kinds|examples|steps|features|uses)\\s+of\\b"
+        ],
+        "explain": [
+          "^(?:explain|describe|summari[sz]e|tell me about)\\b",
+          "^(?:how|why)\\b"
+        ],
+        "definition": [
+          "^(?:what|who|when|where|which)\\s+(?:is|are|was|were)\\b",
+          "^define\\b"
+        ]
+      },
+      "cleanup_markers": [
+        "provided context",
+        "provided material",
+        "document summary",
+        "context start",
+        "context end",
+        "reference:"
+      ],
+      "labels": {
+        "simple_meaning": "Simple meaning",
+        "key_points": "Key points",
+        "summary": "In short"
+      },
+      "max_points": 4
+    }
   }
 }

@@ -14,6 +14,7 @@ from app.modules.rag import (
     is_context_relevant,
     clean_output,
     generate_answer,
+    generate_answer_stream,
     retrieve_chunks,
 )
 
@@ -266,7 +267,9 @@ class TestGenerateAnswer:
 
         used_context = mock_generate.call_args.kwargs["context"]
         assert "[CONTEXT START]" in used_context
-        assert "Chunk 1:" in used_context
+        assert "Reference:" in used_context
+        assert "Chunk 1:" not in used_context
+        assert "Refraction is the bending of light." in used_context
         assert "[CONTEXT END]" in used_context
 
 
@@ -326,6 +329,40 @@ class TestGenerateAnswerStream:
             list(generate_answer_stream("Can you provide some real world examples to this?", "user1", "session1"))
 
         assert events.index("history") < events.index("save")
+
+    @patch(
+        "app.modules.rag.get_cache",
+        return_value={
+            "answer": "On your selected page, **Pulmonary Veins** is shown as a label in the heart diagram. I do not see a full explanation for it on this page.\n\nIf you want, I can also give a short explanation from general knowledge with public references.\n\nUse the buttons below or reply **Yes** / **No**.",
+            "meta": {
+                "quickReplies": [
+                    {"label": "Show extra explanation", "value": "Yes, show the outside explanation"},
+                    {"label": "Stay within this page", "value": "No, stay within the selected material"},
+                ]
+            },
+        },
+    )
+    @patch("app.modules.rag.get_connection")
+    def test_generate_answer_stream_cached_answer_emits_replace_text_payload(self, mock_conn, mock_get_cache):
+        mock_db = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None
+        mock_db.cursor.return_value = mock_cursor
+        mock_conn.return_value = mock_db
+
+        with patch("app.modules.rag.save_chat"):
+            items = list(generate_answer_stream("what is pulmonary veins", "user1", "session1"))
+
+        assert items == [
+            {
+                "text": "On your selected page, **Pulmonary Veins** is shown as a label in the heart diagram. I do not see a full explanation for it on this page.\n\nIf you want, I can also give a short explanation from general knowledge with public references.\n\nUse the buttons below or reply **Yes** / **No**.",
+                "replaceText": True,
+                "quickReplies": [
+                    {"label": "Show extra explanation", "value": "Yes, show the outside explanation"},
+                    {"label": "Stay within this page", "value": "No, stay within the selected material"},
+                ],
+            }
+        ]
 
 
 class TestRetrieveChunks:

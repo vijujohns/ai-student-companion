@@ -22,7 +22,7 @@ from .modules.kb_sync import load_knowledge_base, start_reindex_job
 from .modules.file_management import recover_indexing_jobs
 from .modules.db import init_db
 from .core.debug_logger import dlog, is_debug
-from .core.config_loader import get_cors_origins, get_cors_origin_regex
+from .core.config_loader import get_app_env, get_cors_origins, get_cors_origin_regex
 from .modules.messages import get_message
 
 import sys
@@ -40,7 +40,7 @@ def _route_domain(path: str) -> str:
         return "analytics-progress"
     if path.startswith("/subscription") or path.startswith("/plan"):
         return "commercial"
-    if path.startswith("/lesson") or path.startswith("/quiz") or path.startswith("/flashcards") or path.startswith("/artifacts") or path.startswith("/sessions") or path.startswith("/ask"):
+    if path.startswith("/lesson") or path.startswith("/quiz") or path.startswith("/flashcards") or path.startswith("/artifacts") or path.startswith("/sessions") or path.startswith("/ask") or path.startswith("/notes"):
         return "learning-session"
     if path.startswith("/login") or path.startswith("/register") or path.startswith("/auth") or path.startswith("/profile") or path.startswith("/reset-password"):
         return "identity-auth"
@@ -153,6 +153,7 @@ async def lifespan(app: FastAPI):
     allowed_regex = get_cors_origin_regex()
     dlog("STARTUP", "Brain Teaser backend starting",
          debug_logging=is_debug(),
+         app_env=get_app_env(),
          cors_origins=allowed,
          cors_origin_regex=allowed_regex)
     print("🚀 Loading FAISS index...")

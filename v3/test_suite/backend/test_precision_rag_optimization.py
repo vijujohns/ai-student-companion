@@ -1,4 +1,4 @@
-from app.modules.model_manager import build_prompt
+from app.modules.model_manager import build_prompt, detect_mode, detect_question_type
 from app.modules.rag import _build_query_variants, _format_context_block, _select_context_top_k
 from app.modules.retrieval_orchestrator import hybrid_rank_results
 
@@ -7,7 +7,7 @@ class TestPrecisionRagOptimization:
     def test_select_context_top_k_is_task_tuned_and_bounded(self):
         assert _select_context_top_k("Explain refraction", "qa") == 4
         assert _select_context_top_k("Create a quiz on refraction", "quiz") == 3
-        assert _select_context_top_k("Summarize refraction", "summary", summary_context="summary") == 5
+        assert _select_context_top_k("Summarize refraction", "summary", summary_context="summary") >= 8
 
     def test_build_query_variants_adds_explanation_rewrites(self):
         variants = _build_query_variants("Explain refraction", "qa")
@@ -75,6 +75,27 @@ class TestPrecisionRagOptimization:
         assert len(ranked) == 1
         assert ranked[0]["text"] == docs[0]["text"]
 
+    def test_hybrid_rank_results_filters_metadata_only_matches_without_text_signal(self):
+        docs = [
+            {
+                "text": "This weekly assignment reminder helps parents monitor schedules, homework completion, attendance, and study routines for the coming week.",
+                "source": "artifact/reminder.txt",
+                "index_name": "qa_index",
+                "metadata": {"type": "question", "topic": "Refraction", "chapter": "Light"},
+            }
+        ]
+
+        ranked = hybrid_rank_results(
+            "Explain refraction",
+            docs,
+            hit_indices=[],
+            hit_distances=[],
+            task="lesson",
+            top_k=3,
+        )
+
+        assert ranked == []
+
     def test_context_and_prompt_are_structured_for_teaching(self):
         context = _format_context_block(
             [
@@ -91,3 +112,43 @@ class TestPrecisionRagOptimization:
         assert "Formula:" in context
         assert "step-by-step like a teacher" in prompt
         assert "ONLY from the provided context" in prompt
+
+    def test_question_type_and_mode_detection_follow_rules(self):
+        assert detect_question_type("What did Margie write in her diary?") == "quote"
+        assert detect_question_type("What is refraction?") == "definition"
+        assert detect_question_type("Explain refraction") == "explanation"
+        assert detect_mode("Solve 2x + 3 = 7 step by step") == "guided"
+        assert detect_mode("Who discovered gravity?") == "direct"
+
+    def test_build_prompt_applies_fact_and_guided_styles(self):
+        fact_prompt = build_prompt(
+            "Margie wrote: 'Today Tommy found a real book!'",
+            "What did Margie write in her diary?",
+            "",
+            "qa",
+        )
+        guided_prompt = build_prompt(
+            "2x + 3 = 7",
+            "Help me solve 2x + 3 = 7 step by step",
+            "",
+            "lesson",
+        )
+
+        assert "Return the exact line or sentence from the context when available." in fact_prompt
+        assert "This is not clearly mentioned in the provided material." in fact_prompt
+        assert "GUIDED TUTOR MODE (MANDATORY):" in guided_prompt
+        assert "Now you try a similar problem!" in guided_prompt
+
+    def test_summary_structured_detection_and_prompt_rules(self):
+        assert detect_question_type("Summarize refraction for revision notes") == "summary_structured"
+        assert _select_context_top_k("Summarize refraction for revision notes", "qa") >= 8
+
+        summary_prompt = build_prompt(
+            "Refraction is the bending of light when it passes from one medium to another.",
+            "Summarize refraction for revision notes",
+            "",
+            "qa",
+        )
+
+        assert "STRUCTURED SUMMARY MODE (MANDATORY):" in summary_prompt
+        assert "Final Takeaways" in summary_prompt

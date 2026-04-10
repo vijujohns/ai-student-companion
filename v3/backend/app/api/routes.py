@@ -62,6 +62,13 @@ from ..modules.artifacts import (
     delete_flashcard_session,
 )
 from ..modules.model_manager import get_active_model_profile_key, get_model_profiles, set_active_model_profile_key
+from ..modules.notes import (
+    delete_note as delete_user_note,
+    get_note as get_user_note,
+    list_notes as list_user_notes,
+    save_note as save_user_note,
+    update_note as update_user_note,
+)
 from ..modules.task_router import route_task
 from ..modules.generator_executor import execute_generator_task, is_generator_task
 from ..modules.utility_executor import execute_utility_task, is_utility_task
@@ -73,8 +80,9 @@ from ..schemas.request import (
     QuizSubmitRequest, FlashcardCreateRequest, ArtifactGenerateRequest, RegisterRequest, ResetPasswordRequest,
     ProfileUpdateRequest, SubscriptionQuoteRequest, SubscriptionActivateRequest,
     SubjectQuizRequest, QuestionPaperRequest, AssessmentAttemptRequest, LogActivityRequest,
-    TranslateRequest, PreferencesUpdateRequest, AdminModelProfileUpdateRequest, LinkStudentRequest, CollaborationNoteRequest,
-    CollaborationNoteUpdateRequest, MentorAssignmentRequest, MentorAssignmentUpdateRequest, StudyPlanItemUpdateRequest,
+    TranslateRequest, PreferencesUpdateRequest, AdminModelProfileUpdateRequest, NoteSaveRequest, NoteUpdateRequest,
+    LinkStudentRequest, CollaborationNoteRequest, CollaborationNoteUpdateRequest, MentorAssignmentRequest,
+    MentorAssignmentUpdateRequest, StudyPlanItemUpdateRequest,
 )
 from ..schemas.response import (
     LoginResponse, AskResponse, SessionListResponse, SessionContentResponse,
@@ -265,6 +273,7 @@ def ask(request: AskRequest, user=Depends(get_current_user)):
                 "session_id": session_id,
                 "model_name": model_name,
                 "session_content_override": request.content_id,
+                "bypass_cache": request.bypass_cache,
             }
             if routed_task.model_task != "qa":
                 generate_kwargs["task"] = routed_task.model_task
@@ -483,6 +492,57 @@ def my_mentors(user=Depends(get_current_user)):
 
     mentors = services.relationships.list_mentors_for_student(user["username"])
     return envelope({"mentors": mentors}, message_id="MSG-1000")
+
+
+@router.post("/notes/save")
+def save_summary_note(request: NoteSaveRequest, user=Depends(get_current_user)):
+    note = save_user_note(
+        user["username"],
+        title=request.title,
+        content=request.content,
+        session_id=request.session_id,
+        source_query=request.source_query,
+        selected_content=request.selected_content,
+        is_pinned=request.is_pinned,
+    )
+    return envelope({"status": "saved", "note": note}, message_id="MSG-1000")
+
+
+@router.get("/notes")
+def list_summary_notes(user=Depends(get_current_user)):
+    return envelope({"notes": list_user_notes(user["username"])}, message_id="MSG-1000")
+
+
+@router.get("/notes/{note_id}")
+def get_summary_note(note_id: int, user=Depends(get_current_user)):
+    note = get_user_note(user["username"], note_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return envelope({"note": note}, message_id="MSG-1000")
+
+
+@router.put("/notes/{note_id}")
+def update_summary_note(note_id: int, request: NoteUpdateRequest, user=Depends(get_current_user)):
+    note = update_user_note(
+        user["username"],
+        note_id,
+        title=request.title,
+        content=request.content,
+        source_query=request.source_query,
+        selected_content=request.selected_content,
+        is_pinned=request.is_pinned,
+    )
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return envelope({"status": "updated", "note": note}, message_id="MSG-1000")
+
+
+@router.delete("/notes/{note_id}")
+def delete_summary_note(note_id: int, user=Depends(get_current_user)):
+    deleted = delete_user_note(user["username"], note_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return envelope({"status": "deleted", "note_id": note_id}, message_id="MSG-1000")
 
 
 @router.get("/students/{student_username}/progress")
@@ -1117,6 +1177,8 @@ def api_generate_quiz(request: QuizGenerateRequest, user=Depends(get_current_use
             request.session_id,
             request.chapter,
             context_hint=request.quiz_context,
+            selected_content=request.content_id,
+            requested_by=user,
         )
     except Exception:
         release_usage(user["username"], "quiz")
@@ -1212,7 +1274,12 @@ def generate_card_quiz_endpoint(
         raise HTTPException(status_code=404, detail="Card not found")
     _consume_quota_or_raise(user, "quiz")
     try:
-        result = generate_card_quiz(user["username"], card, context_hint=request.context if request else None)
+        result = generate_card_quiz(
+            user["username"],
+            card,
+            context_hint=request.context if request else None,
+            selected_content=request.content_id if request else None,
+        )
     except Exception:
         release_usage(user["username"], "quiz")
         raise
@@ -1238,7 +1305,12 @@ def generate_card_flashcards_endpoint(
         raise HTTPException(status_code=404, detail="Card not found")
     _consume_quota_or_raise(user, "flashcard")
     try:
-        result = generate_card_flashcards(user["username"], card, context_hint=request.context if request else None)
+        result = generate_card_flashcards(
+            user["username"],
+            card,
+            context_hint=request.context if request else None,
+            selected_content=request.content_id if request else None,
+        )
     except Exception:
         release_usage(user["username"], "flashcard")
         raise

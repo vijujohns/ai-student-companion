@@ -502,13 +502,16 @@ export default function RoleHubPanel({
         const openAssignments = assignments.filter(
           (assignment) => !["completed", "dismissed"].includes(String(assignment?.status || "assigned").toLowerCase()),
         );
+        const overdueAssignments = openAssignments.filter(
+          (assignment) => getAssignmentDueMeta(assignment?.due_label).bucket === "overdue",
+        );
         const urgentAssignments = openAssignments.filter((assignment) => {
           const bucket = getAssignmentDueMeta(assignment?.due_label).bucket;
           return bucket === "overdue" || bucket === "due-soon";
         });
         const assessmentAverage = Number(dashboard?.assessment_summary?.average_score_pct || 0);
         const streakDays = Number(dashboard?.streak_days || 0);
-        const needsAttention = urgentAssignments.length > 0 || (assessmentAverage > 0 && assessmentAverage < 70) || streakDays < 2;
+        const needsAttention = overdueAssignments.length > 0 || (assessmentAverage > 0 && assessmentAverage < 70) || streakDays < 2;
 
         return {
           learnerName: item?.first_name || item?.email || learnerKey,

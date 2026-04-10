@@ -23,16 +23,17 @@ export function useChatSendMessage({
   apiFetch,
   send = sendMessage,
 }) {
-  const handleSend = useCallback(async () => {
-    if (!input.trim()) return;
+  const handleSend = useCallback(async (overrideInput = null) => {
+    const outgoingText = typeof overrideInput === "string" ? overrideInput : input;
+    if (!outgoingText.trim()) return;
 
     const currentSession = sessionId || Date.now().toString();
     const activeContentId = chatTask === "explorer" ? null : selectedContent;
 
-    setMessages((prev) => [...prev, { type: "user", text: input }]);
+    setMessages((prev) => [...prev, { type: "user", text: outgoingText }]);
     setCurrentStream("");
     currentStreamRef.current = "";
-    currentStreamMetaRef.current = { messageId: null, level: null };
+    currentStreamMetaRef.current = { messageId: null, level: null, quickReplies: [] };
     pendingResponseRef.current = true;
     isStreamingRef.current = true;
     activeStreamSessionRef.current = currentSession;
@@ -58,7 +59,7 @@ export function useChatSendMessage({
     }
 
     send({
-      query: input,
+      query: outgoingText,
       session_id: currentSession,
       context_id: activeContentId,
       ...(chatTask ? { task: chatTask } : {}),

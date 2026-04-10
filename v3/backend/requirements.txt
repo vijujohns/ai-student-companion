@@ -12,3 +12,5 @@ llama-cpp-python
 openai
 python-dotenv
 sympy
+Pillow
+pytesseract

@@ -1,6 +1,10 @@
 import json
 import os
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
 CONFIG_FILE = os.path.join(BASE_DIR, "configs", "settings.json")
 
@@ -20,6 +24,34 @@ def load_config():
 def get_task_model(task: str):
     config = load_config()
     return config["tasks"].get(task, config["default_model"])
+
+
+def get_app_env(default: str = "dev") -> str:
+    raw = str(os.getenv("APP_ENV", "") or "").strip().lower()
+    if not raw and os.getenv("PYTEST_CURRENT_TEST"):
+        return "test"
+
+    normalized = {
+        "": default,
+        "development": "dev",
+        "debug": "dev",
+        "local": "dev",
+        "dev": "dev",
+        "production": "prod",
+        "live": "prod",
+        "prod": "prod",
+        "testing": "test",
+        "test": "test",
+    }.get(raw, raw or default)
+    return normalized or default
+
+
+def is_dev() -> bool:
+    return get_app_env() == "dev"
+
+
+def is_prod() -> bool:
+    return get_app_env() == "prod"
 
 
 def get_model_config(model_name: str):

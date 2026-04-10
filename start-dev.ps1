@@ -9,6 +9,8 @@ param(
     [switch]$IncrementalReindex,
     [ValidateSet('incremental', 'full', 'skip')]
     [string]$ReindexMode,
+    [ValidateSet('dev', 'prod', 'test')]
+    [string]$Environment,
     [switch]$ForceKillExisting,
     [switch]$NoLogWindow,
     [switch]$Help,
@@ -27,19 +29,20 @@ $frontendLog = Join-Path $logsDir "frontend-dev.log"
 $combinedLog = Join-Path $logsDir "dev-console.log"
 $debugLog = Join-Path $logsDir "debug.log"
 $stateFile = Join-Path $logsDir "dev-run-state.json"
+$backendEnvFile = Join-Path $backendDir ".env"
 
 function Show-Usage {
     Write-Host "Usage:" -ForegroundColor Cyan
-    Write-Host "  .\start-dev.ps1                                  # interactive launcher"
-    Write-Host "  .\start-dev.ps1 -Start -DebugMode -ReindexMode full"
-    Write-Host "  .\start-dev.ps1 -Start -Background -ReindexMode incremental"
-    Write-Host "  .\start-dev.ps1 -Start -SkipReindex"
+    Write-Host "  .\start-dev.ps1                                           # interactive launcher"
+    Write-Host "  .\start-dev.ps1 -Start -Environment dev -DebugMode -ReindexMode full"
+    Write-Host "  .\start-dev.ps1 -Start -Environment prod -Background -ReindexMode incremental"
+    Write-Host "  .\start-dev.ps1 -Start -Environment test -SkipReindex"
     Write-Host "  .\start-dev.ps1 -Stop"
     Write-Host ""
     Write-Host "What it does:" -ForegroundColor Cyan
     Write-Host "  - checks ports 3000 and 8000"
     Write-Host "  - asks before killing existing processes"
-    Write-Host "  - prompts for debug/background and reindex mode"
+    Write-Host "  - prompts for environment, debug/background, and reindex mode"
     Write-Host "  - opens a live log window with tail 500"
     Write-Host "  - can stop the application gracefully"
     Write-Host ""
@@ -48,6 +51,7 @@ function Show-Usage {
     Write-Host "  -Stop              Stop the running app and close launcher windows"
     Write-Host "  -DebugMode         Enable backend debug logging"
     Write-Host "  -Background        Start backend/frontend minimized in the background"
+    Write-Host "  -Environment       Choose: dev, prod, or test"
     Write-Host "  -ReindexMode       Choose: incremental, full, or skip"
     Write-Host "  -FullReindex       Force a fresh rebuild of every indexed file"
     Write-Host "  -IncrementalReindex Only index new/changed/unindexed files"
@@ -69,11 +73,54 @@ function Ensure-Paths {
     }
 
     New-Item -ItemType Directory -Force -Path $logsDir | Out-Null
+    Ensure-BackendEnvFile
 }
 
 function Escape-PSLiteral {
     param([string]$Value)
     return $Value.Replace("'", "''")
+}
+
+function Set-DotEnvValue {
+    param(
+        [string]$FilePath,
+        [string]$Key,
+        [string]$Value,
+        [switch]$OnlyIfMissing
+    )
+
+    if (-not (Test-Path $FilePath)) {
+        New-Item -ItemType File -Path $FilePath -Force | Out-Null
+    }
+
+    $content = Get-Content -Path $FilePath -Raw -ErrorAction SilentlyContinue
+    if ($null -eq $content) {
+        $content = ""
+    }
+
+    $entry = "$Key=$Value"
+    $pattern = "(?m)^\s*" + [regex]::Escape($Key) + "\s*=.*$"
+
+    if ([regex]::IsMatch($content, $pattern)) {
+        if ($OnlyIfMissing) {
+            return
+        }
+        $updated = [regex]::Replace($content, $pattern, $entry, 1)
+    } else {
+        $updated = $content
+        if ($updated.Length -gt 0 -and -not $updated.EndsWith("`n")) {
+            $updated += "`r`n"
+        }
+        $updated += $entry + "`r`n"
+    }
+
+    Set-Content -Path $FilePath -Value $updated -Encoding UTF8
+}
+
+function Ensure-BackendEnvFile {
+    Set-DotEnvValue -FilePath $backendEnvFile -Key "GROQ_API_KEY" -Value "YOUR_GROQ_API_KEY_HERE" -OnlyIfMissing
+    Set-DotEnvValue -FilePath $backendEnvFile -Key "GROQ_BASE_URL" -Value "https://api.groq.com/openai/v1" -OnlyIfMissing
+    Set-DotEnvValue -FilePath $backendEnvFile -Key "GROQ_TIMEOUT_SECONDS" -Value "60" -OnlyIfMissing
 }
 
 function Read-YesNo {
@@ -129,6 +176,34 @@ function Resolve-ReindexMode {
         return $ReindexMode.ToLowerInvariant()
     }
     return "skip"
+}
+
+function Resolve-EnvironmentChoice {
+    if ($Environment) {
+        return $Environment.ToLowerInvariant()
+    }
+    return "dev"
+}
+
+function Read-EnvironmentChoice {
+    while ($true) {
+        Write-Host "Environment options:" -ForegroundColor Cyan
+        Write-Host "  [1] Dev   - disable cache for easier debugging (default)"
+        Write-Host "  [2] Prod  - enable normal production-style cache behavior"
+        Write-Host "  [3] Test  - start with test-style environment settings"
+
+        $choice = Read-Host "Choose environment [1/2/3]"
+        switch ($choice.Trim().ToLowerInvariant()) {
+            "" { return "dev" }
+            "1" { return "dev" }
+            "dev" { return "dev" }
+            "2" { return "prod" }
+            "prod" { return "prod" }
+            "3" { return "test" }
+            "test" { return "test" }
+            default { Write-Host "Please choose 1, 2, or 3." -ForegroundColor Yellow }
+        }
+    }
 }
 
 function Read-ReindexModeChoice {
@@ -297,6 +372,7 @@ function Stop-DevStack {
 }
 
 function Start-DevStack {
+    $selectedEnvironment = Resolve-EnvironmentChoice
     $selectedReindexMode = Resolve-ReindexMode
     $owners = Get-PortOwners -Ports @(3000, 8000)
     if ($owners -and $owners.Count -gt 0) {
@@ -333,8 +409,8 @@ function Start-DevStack {
     $launchStamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     @(
         "=== AI Student Companion launch: $launchStamp ===",
-        "DebugMode=$DebugMode | Background=$Background | ReindexMode=$selectedReindexMode",
-        "BackendCLI=run.py --reindex=$selectedReindexMode"
+        "Environment=$selectedEnvironment | DebugMode=$DebugMode | Background=$Background | ReindexMode=$selectedReindexMode",
+        "BackendCLI=APP_ENV=$selectedEnvironment python run.py --reindex=$selectedReindexMode"
     ) | Set-Content -Path $combinedLog -Encoding UTF8
     "=== Backend launch: $launchStamp ===" | Set-Content -Path $backendLog -Encoding UTF8
     "=== Frontend launch: $launchStamp ===" | Set-Content -Path $frontendLog -Encoding UTF8
@@ -354,7 +430,7 @@ function Start-DevStack {
     $backendCommand = @"
 try { `$Host.UI.RawUI.WindowTitle = 'AI Student Companion Backend' } catch {}
 `$ErrorActionPreference = 'Stop'
-`$env:APP_ENV = 'development'
+`$env:APP_ENV = '$selectedEnvironment'
 `$env:PYTHONIOENCODING = 'utf-8'
 `$env:BACKEND_BIND_HOST = '0.0.0.0'
 `$env:BACKEND_PORT = '8000'
@@ -374,6 +450,7 @@ try {
     $frontendCommand = @"
 try { `$Host.UI.RawUI.WindowTitle = 'AI Student Companion Frontend' } catch {}
 `$ErrorActionPreference = 'Stop'
+`$env:APP_ENV = '$selectedEnvironment'
 `$env:BROWSER = 'none'
 Set-Location '$frontendDirEsc'
 Start-Transcript -Path '$frontendLogEsc' -Append | Out-Null
@@ -410,7 +487,9 @@ Get-Content -LiteralPath @('$backendLogEsc', '$frontendLogEsc', '$debugLogEsc') 
     Write-Host "Starting AI Student Companion..." -ForegroundColor Green
     Write-Host "  Frontend -> http://127.0.0.1:3000"
     Write-Host "  Backend  -> http://127.0.0.1:8000"
-    Write-Host "  Debug mode    -> $(if ($DebugMode) { 'ON' } else { 'OFF' })"
+    Write-Host "  Backend env file -> $backendEnvFile"
+    Write-Host "  App environment  -> $selectedEnvironment"
+    Write-Host "  Debug mode       -> $(if ($DebugMode) { 'ON' } else { 'OFF' })"
     Write-Host "  Background    -> $(if ($Background) { 'ON (minimized)' } else { 'OFF' })"
     Write-Host "  Reindex mode  -> $selectedReindexMode"
     Write-Host ""
@@ -428,6 +507,7 @@ Get-Content -LiteralPath @('$backendLogEsc', '$frontendLogEsc', '$debugLogEsc') 
         backendPid = $backendProc.Id
         frontendPid = $frontendProc.Id
         logPid = if ($logProc) { $logProc.Id } else { $null }
+        appEnv = $selectedEnvironment
         debugMode = [bool]$DebugMode
         background = [bool]$Background
         skipReindex = [bool]($selectedReindexMode -eq 'skip')
@@ -461,7 +541,8 @@ $explicitActionRequested = $PSBoundParameters.ContainsKey('Start') -or $PSBoundP
     $PSBoundParameters.ContainsKey('DebugMode') -or $PSBoundParameters.ContainsKey('Background') -or
     $PSBoundParameters.ContainsKey('SkipReindex') -or $PSBoundParameters.ContainsKey('FullReindex') -or
     $PSBoundParameters.ContainsKey('IncrementalReindex') -or $PSBoundParameters.ContainsKey('ReindexMode') -or
-    $PSBoundParameters.ContainsKey('ForceKillExisting') -or $PSBoundParameters.ContainsKey('NoLogWindow')
+    $PSBoundParameters.ContainsKey('Environment') -or $PSBoundParameters.ContainsKey('ForceKillExisting') -or
+    $PSBoundParameters.ContainsKey('NoLogWindow')
 
 if (-not $explicitActionRequested) {
     $Interactive = $true
@@ -478,6 +559,7 @@ if ($Interactive) {
         "stop" { $Stop = $true }
         default {
             $Start = $true
+            $Environment = Read-EnvironmentChoice
             $DebugMode = Read-YesNo -Prompt "Start in debug mode?" -Default $false
             $Background = Read-YesNo -Prompt "Run in background mode (minimized windows)?" -Default $false
             $ReindexMode = Read-ReindexModeChoice

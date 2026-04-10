@@ -24,6 +24,7 @@ export default function QuizPanel({
   autoRunToken = "",
   prefilledQuizData = null,
   currentContextLabel = null,
+  selectedContentId = null,
   hasLinkedContent = false,
   isContextViewerVisible = false,
   onOpenContext = null,
@@ -76,7 +77,7 @@ export default function QuizPanel({
     if (!Array.isArray(items)) return [];
     return items.map((item, index) => {
       const options = Array.isArray(item.options) ? item.options : ["A", "B", "C", "D"];
-      const rawCorrect = item.correct_option || item.answer || "A";
+      const rawCorrect = item.correct_option || item.correct_answer || item.answer || "A";
       const upper = typeof rawCorrect === "string" ? rawCorrect.trim().toUpperCase() : "";
       const optionIndex = ["A", "B", "C", "D"].indexOf(upper);
       const normalizedCorrect =
@@ -87,6 +88,8 @@ export default function QuizPanel({
         question: item.question || `Question ${index + 1}`,
         options,
         correct_option: normalizedCorrect,
+        correct_option_label: optionIndex >= 0 ? upper : "",
+        correct_answer: normalizedCorrect,
       };
     });
   }, []);
@@ -270,64 +273,37 @@ export default function QuizPanel({
           return;
         }
 
-        if (selectedCardId) {
-          const res = await apiFetch(`/cards/${selectedCardId}/quiz/generate`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ context: quizContext.trim() || undefined }),
-          });
-          const data = await res.json().catch(() => ({}));
+        const activeCardId = selectedCardId || (lessonCards[0] ? String(lessonCards[0].card_id) : "");
+        if (!activeCardId) {
+          setError("Select a lesson card before generating a lesson-based quiz.");
+          return;
+        }
 
-          if (!res.ok) {
-            setError(await parseApiError(res, "Failed to generate quiz from selected card."));
-            return;
-          }
+        const res = await apiFetch(`/cards/${activeCardId}/quiz/generate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            context: quizContext.trim() || undefined,
+            content_id: selectedContentId || undefined,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
 
-          const payloadQuestions = normalizeQuizQuestions(data?.payload?.quiz || []);
-          setQuizId(data?.artifact_id ? `artifact-${data.artifact_id}` : "card-quiz");
-          setArtifactId(data?.artifact_id || null);
-          setQuestions(payloadQuestions);
-          setAnswers({});
-          setResults({});
-          setQuizSource("card");
+        if (!res.ok) {
+          setError(await parseApiError(res, "Failed to generate quiz from selected card."));
+          return;
+        }
 
-          if (payloadQuestions.length > 0 && onResultReady) {
-            onResultReady();
-          }
-        } else {
-          const fallbackChapter = String(selectedLessonSession?.chapter || "").trim();
-          if (!fallbackChapter) {
-            setError("Selected lesson session has no chapter context to generate quiz.");
-            return;
-          }
+        const payloadQuestions = normalizeQuizQuestions(data?.payload?.quiz || []);
+        setQuizId(data?.artifact_id ? `artifact-${data.artifact_id}` : "card-quiz");
+        setArtifactId(data?.artifact_id || null);
+        setQuestions(payloadQuestions);
+        setAnswers({});
+        setResults({});
+        setQuizSource("card");
 
-          const res = await apiFetch("/quiz/generate", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              session_id: sid,
-              chapter: fallbackChapter,
-              quiz_context: quizContext.trim() || undefined,
-            }),
-          });
-
-          if (!res.ok) {
-            setError(await parseApiError(res, "Failed to generate quiz from lesson session."));
-            return;
-          }
-
-          const data = await res.json();
-          const normalized = normalizeQuizQuestions(data.quiz || []);
-          setQuizId(data.quiz_id || "");
-          setArtifactId(null);
-          setQuestions(normalized);
-          setAnswers({});
-          setResults({});
-          setQuizSource("session");
-
-          if (normalized.length > 0 && onResultReady) {
-            onResultReady();
-          }
+        if (payloadQuestions.length > 0 && onResultReady) {
+          onResultReady();
         }
       } else {
         const res = await apiFetch("/quiz/generate", {
@@ -337,6 +313,7 @@ export default function QuizPanel({
             session_id: sid,
             chapter: selectedChapter,
             quiz_context: quizContext.trim() || undefined,
+            content_id: selectedContentId || undefined,
           }),
         });
 
@@ -614,7 +591,7 @@ export default function QuizPanel({
                   onChange={(event) => setSelectedCardId(event.target.value || "")}
                   disabled={!lessonSourceSessionId || lessonCards.length === 0}
                 >
-                  <option value="">Any card in selected session (optional)</option>
+                  <option value="">Select lesson card</option>
                   {lessonCards.map((card) => (
                     <option key={card.card_id} value={card.card_id}>
                       {card.order || card.card_id}. {card.title}

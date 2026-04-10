@@ -1118,6 +1118,51 @@ describe('FlashcardPanel Component', () => {
     // May have control buttons
     expect(allButtons.length).toBeGreaterThanOrEqual(0);
   });
+
+  it('flips only the selected flashcard and shows question plus answer on the back', async () => {
+    global.fetch.mockImplementation((url) => {
+      const target = String(url);
+
+      if (target.includes('/flashcards/latest')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            artifact: {
+              artifact_id: 40,
+              title: 'Flashcards - Chapter 3 - Mughal Empire',
+              tags: [],
+              payload: {
+                flashcards: [
+                  { question: 'Who founded the Mughal Empire?', answer: 'Babur' },
+                  { question: 'Who built the Taj Mahal?', answer: 'Shah Jahan' },
+                ],
+              },
+            },
+          }),
+        });
+      }
+
+      if (target.includes('/lesson-plan/sessions')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ sessions: [] }) });
+      }
+
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) });
+    });
+
+    const { container } = await renderWithEffects(<FlashcardPanel flashcardSessionId="cards-session" />);
+
+    expect(await screen.findByText('Who founded the Mughal Empire?')).toBeInTheDocument();
+    expect(screen.queryByText('Babur')).not.toBeInTheDocument();
+    expect(screen.queryByText('Shah Jahan')).not.toBeInTheDocument();
+
+    const cards = container.querySelectorAll('.flashcard-card');
+    fireEvent.click(cards[0]);
+
+    expect(await screen.findByText('Babur')).toBeInTheDocument();
+    expect(screen.queryByText('Shah Jahan')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /flip flashcard 1/i })).toBeInTheDocument();
+  });
 });
 
 

@@ -21,14 +21,15 @@ echo.
 echo Double-click this file for the interactive menu.
 echo.
 echo Common commands:
-echo   start-dev.bat                ^(interactive start/stop menu^)
-echo   start-dev.bat -Start         ^(start immediately^)
-echo   start-dev.bat -Stop          ^(stop the running app^)
-echo   start-dev.bat -Help          ^(show PowerShell options^)
+echo   start-dev.bat                              ^(interactive start/stop menu^)
+echo   start-dev.bat -Start -Environment dev      ^(start in development mode^)
+echo   start-dev.bat -Start -Environment prod     ^(start in production-like mode^)
+echo   start-dev.bat -Stop                        ^(stop the running app^)
+echo   start-dev.bat -Help                        ^(show PowerShell options^)
 echo.
 echo The interactive launcher will:
 echo   - ask before killing ports 3000 and 8000
-echo   - ask about debug mode, background mode, and reindex mode
+echo   - ask about environment, debug mode, background mode, and reindex mode
 echo   - let you choose full, incremental, or skipped startup reindex
 echo   - open a live log tail window
 exit /b 0

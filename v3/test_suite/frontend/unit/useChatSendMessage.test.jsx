@@ -27,7 +27,7 @@ describe("useChatSendMessage", () => {
         setSessionId: vi.fn(),
         setInput: vi.fn(),
         currentStreamRef: { current: "" },
-        currentStreamMetaRef: { current: { messageId: "x", level: "INFO" } },
+        currentStreamMetaRef: { current: { messageId: "x", level: "INFO", quickReplies: [] } },
         pendingResponseRef: { current: false },
         isStreamingRef: { current: false },
         activeStreamSessionRef: { current: null },
@@ -61,7 +61,7 @@ describe("useChatSendMessage", () => {
     const apiFetch = vi.fn().mockResolvedValue({ ok: true });
     const send = vi.fn();
     const currentStreamRef = { current: "existing" };
-    const currentStreamMetaRef = { current: { messageId: "old", level: "WARN" } };
+    const currentStreamMetaRef = { current: { messageId: "old", level: "WARN", quickReplies: [{ label: "old", value: "old" }] } };
     const pendingResponseRef = { current: false };
     const isStreamingRef = { current: false };
     const activeStreamSessionRef = { current: null };
@@ -118,7 +118,7 @@ describe("useChatSendMessage", () => {
     });
     expect(loadSessions).toHaveBeenCalledTimes(1);
     expect(currentStreamRef.current).toBe("");
-    expect(currentStreamMetaRef.current).toEqual({ messageId: null, level: null });
+    expect(currentStreamMetaRef.current).toEqual({ messageId: null, level: null, quickReplies: [] });
     expect(pendingResponseRef.current).toBe(true);
     expect(isStreamingRef.current).toBe(true);
     expect(activeStreamSessionRef.current).toBe("123456");

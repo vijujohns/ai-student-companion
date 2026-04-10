@@ -1111,6 +1111,33 @@
   border-bottom-left-radius: 6px;
 }
 
+.message-quick-replies {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.message-quick-reply {
+  min-height: 32px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(25, 195, 156, 0.24);
+  background: rgba(25, 195, 156, 0.08);
+  color: var(--accent-strong);
+  font-size: 0.78rem;
+  line-height: 1.2;
+}
+
+.message-quick-reply:hover:not(:disabled) {
+  border-color: rgba(25, 195, 156, 0.42);
+  background: rgba(25, 195, 156, 0.14);
+}
+
+.message-quick-reply:disabled {
+  opacity: 0.6;
+}
+
 .message-meta {
   margin-top: 10px;
   display: inline-flex;
@@ -1715,17 +1742,96 @@
   padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+  cursor: pointer;
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
 }
 
-.flashcard-card strong {
-  color: var(--text);
+.flashcard-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(123, 227, 201, 0.28);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
 }
 
-.flashcard-card p {
-  margin: 0;
+.flashcard-card:focus-visible {
+  outline: 2px solid rgba(123, 227, 201, 0.7);
+  outline-offset: 2px;
+}
+
+.flashcard-card--flipped {
+  background: rgba(123, 227, 201, 0.06);
+  border-color: rgba(123, 227, 201, 0.3);
+}
+
+.flashcard-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.flashcard-card__badge {
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--text-soft);
+}
+
+.flashcard-card__flip {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.flashcard-card__flip:hover {
+  background: rgba(123, 227, 201, 0.1);
+  border-color: rgba(123, 227, 201, 0.3);
+}
+
+.flashcard-card__face {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.flashcard-card__section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.flashcard-card__label {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+}
+
+.flashcard-card__question,
+.flashcard-card__answer {
+  margin: 0;
   line-height: 1.5;
+}
+
+.flashcard-card__question {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.flashcard-card__answer {
+  color: var(--text-soft);
+}
+
+.flashcard-card__hint {
+  font-size: 0.8rem;
+  color: var(--text-soft);
 }
 
 .pdf-view {
@@ -2195,7 +2301,17 @@
     padding: 8px 14px;
     background: rgba(16, 163, 127, 0.08);
     border-radius: 0 10px 10px 0;
-    color: var(--text-soft);
+    color: #bdeee1;
+  }
+
+  .markdown-content blockquote p,
+  .markdown-content blockquote strong,
+  .markdown-content blockquote em {
+    color: #d8fff4;
+  }
+
+  .markdown-content blockquote em {
+    font-style: italic;
   }
 
   .markdown-content a {
@@ -3774,6 +3890,149 @@
 .progress-empty svg {
   font-size: 2rem;
   opacity: 0.4;
+}
+
+/* =========================================================================
+   Summary Notes UI
+   ========================================================================= */
+
+.summary-viewer {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(106, 138, 255, 0.12), rgba(80, 200, 120, 0.05));
+  border: 1px solid var(--border-soft);
+}
+
+.summary-viewer__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.summary-viewer__header h4 {
+  margin: 4px 0 0;
+  color: var(--text-primary);
+}
+
+.summary-viewer__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.summary-viewer__sections {
+  display: grid;
+  gap: 10px;
+}
+
+.summary-viewer__section {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(13, 18, 27, 0.4);
+  border: 1px solid var(--border-soft);
+}
+
+.summary-viewer__section h5 {
+  margin: 0 0 6px;
+  color: var(--text-primary);
+  font-size: 0.82rem;
+}
+
+.summary-viewer__editor,
+.notes-panel__editor {
+  width: 100%;
+  min-height: 220px;
+  border-radius: 10px;
+  border: 1px solid var(--border-soft);
+  background: var(--surface-2);
+  color: var(--text-primary);
+  padding: 12px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.summary-viewer__status {
+  font-size: 0.78rem;
+  color: var(--text-soft);
+}
+
+.summary-viewer__status--error {
+  color: #f1607b;
+}
+
+.notes-panel__toolbar {
+  width: min(100%, 1040px);
+  margin: 0 auto;
+}
+
+.notes-panel__layout {
+  width: min(100%, 1040px);
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.notes-panel__list,
+.notes-panel__editor-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+}
+
+.notes-panel__list-item {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-soft);
+  background: rgba(13, 18, 27, 0.36);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.notes-panel__list-item span {
+  font-size: 0.74rem;
+  color: var(--text-soft);
+}
+
+.notes-panel__list-item.is-active {
+  border-color: rgba(106, 138, 255, 0.55);
+  background: rgba(106, 138, 255, 0.12);
+}
+
+.notes-panel__editor-actions {
+  justify-content: flex-start;
+  margin-left: 0;
+}
+
+.notes-panel__preview {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(13, 18, 27, 0.36);
+  border: 1px solid var(--border-soft);
+}
+
+.notes-panel__empty {
+  text-align: center;
+}
+
+@media (max-width: 900px) {
+  .notes-panel__layout {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* =========================================================================

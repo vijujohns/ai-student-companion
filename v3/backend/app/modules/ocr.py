@@ -12,6 +12,7 @@ Usage:
 
 from __future__ import annotations
 
+from io import BytesIO
 import logging
 import os
 from typing import Dict
@@ -36,9 +37,10 @@ class _MissingPytesseractModule:
 
 
 try:
-    from PIL import Image  # type: ignore
+    from PIL import Image, ImageOps  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     Image = _MissingImageModule()  # type: ignore
+    ImageOps = None  # type: ignore
 
 try:
     import pytesseract  # type: ignore
@@ -109,6 +111,41 @@ def get_ocr_status() -> Dict[str, object]:
 # Public extraction API
 # ---------------------------------------------------------------------------
 
+def _prepare_image_for_ocr(image):
+    """Apply light preprocessing so textbook labels and diagram text are easier to read."""
+    try:
+        if getattr(image, "mode", None) in ("P", "RGBA", "LA"):
+            image = image.convert("RGB")
+        if ImageOps is not None and hasattr(ImageOps, "grayscale"):
+            image = ImageOps.grayscale(image)
+        if ImageOps is not None and hasattr(ImageOps, "autocontrast"):
+            image = ImageOps.autocontrast(image)
+    except Exception:
+        return image
+    return image
+
+
+def _extract_text_from_opened_image(image, *, lang: str = "eng", source_label: str = "image") -> str:
+    status = get_ocr_status()
+    if not status["available"]:
+        logger.warning("OCR unavailable — install Tesseract to enable image text extraction.")
+        return ""
+
+    try:
+        if not hasattr(pytesseract, "image_to_string"):
+            logger.warning("OCR dependencies are unavailable for %s", source_label)
+            return ""
+
+        prepared = _prepare_image_for_ocr(image)
+        text = pytesseract.image_to_string(prepared, lang=lang, config="--psm 6")
+        cleaned = text.strip()
+        logger.info("OCR completed for %s (%d chars)", source_label, len(cleaned))
+        return cleaned
+    except Exception as exc:
+        logger.error("OCR extraction failed for %s: %s", source_label, exc)
+        return ""
+
+
 def extract_text_from_image(file_path: str, lang: str = "eng") -> str:
     """
     Extract text from an image file using Tesseract OCR.
@@ -140,28 +177,37 @@ def extract_text_from_image(file_path: str, lang: str = "eng") -> str:
         logger.warning("OCR: unsupported extension %s for %s", ext, file_path)
         return ""
 
-    status = get_ocr_status()
-    if not status["available"]:
-        logger.warning("OCR unavailable — install Tesseract to enable image text extraction.")
-        return ""
-
     try:
-        if not hasattr(Image, "open") or not hasattr(pytesseract, "image_to_string"):
+        if not hasattr(Image, "open"):
             logger.warning("OCR dependencies are unavailable for %s", file_path)
             return ""
 
         logger.info("Image extracted for OCR: %s", file_path)
         image = Image.open(file_path)
-        # Convert palette / RGBA modes to RGB for better Tesseract compatibility
-        if image.mode in ("P", "RGBA", "LA"):
-            image = image.convert("RGB")
-
-        text = pytesseract.image_to_string(image, lang=lang)
-        cleaned = text.strip()
-        logger.info("OCR completed for %s (%d chars)", file_path, len(cleaned))
-        return cleaned
+        return _extract_text_from_opened_image(image, lang=lang, source_label=file_path)
     except Exception as exc:
         logger.error("OCR extraction failed for %s: %s", file_path, exc)
+        return ""
+
+
+def extract_text_from_image_bytes(image_bytes: bytes, filename: str = "image.png", lang: str = "eng") -> str:
+    """Extract text from in-memory image bytes (used for PDF diagram OCR fallback)."""
+    raw = image_bytes or b""
+    if not raw:
+        return ""
+    if len(raw) > _MAX_IMAGE_BYTES:
+        logger.warning("OCR: embedded image too large (%d bytes), skipping: %s", len(raw), filename)
+        return ""
+
+    try:
+        if not hasattr(Image, "open"):
+            logger.warning("OCR dependencies are unavailable for embedded image %s", filename)
+            return ""
+
+        image = Image.open(BytesIO(raw))
+        return _extract_text_from_opened_image(image, lang=lang, source_label=filename)
+    except Exception as exc:
+        logger.error("OCR extraction failed for embedded image %s: %s", filename, exc)
         return ""
 
 

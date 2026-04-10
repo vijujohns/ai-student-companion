@@ -10,6 +10,7 @@ import json
 import time
 
 from ..core.config_loader import get_rag_config
+from .ocr import extract_text_from_image_bytes, get_ocr_status
 
 # Base data directory
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
@@ -35,9 +36,53 @@ def extract_text_from_pdf(file_path):
             pages.append(page_text)
 
     text = "\n\n".join(pages)
-    text = re.sub(r"\s*\n+\s*", " ", text)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
     text = re.sub(r"[ \t]{2,}", " ", text)
     return text.strip()
+
+
+def extract_ocr_text_from_pdf(file_path, query: str = "", max_pages: int = 6, max_images_per_page: int = 4) -> str:
+    """OCR embedded PDF images and diagram snippets when normal text extraction misses labels."""
+    status = get_ocr_status()
+    if not status.get("available"):
+        return ""
+
+    try:
+        reader = PdfReader(file_path)
+    except Exception:
+        return ""
+
+    query_terms = {
+        token
+        for token in re.findall(r"[A-Za-z0-9']+", str(query or "").lower())
+        if len(token) > 2
+    }
+    prioritized = []
+    supplemental = []
+
+    for page_number, page in enumerate(reader.pages[: max(1, int(max_pages or 1))], start=1):
+        images = list(getattr(page, "images", []) or [])
+        if not images:
+            continue
+
+        for image_number, image_file in enumerate(images[: max(1, int(max_images_per_page or 1))], start=1):
+            image_bytes = getattr(image_file, "data", b"") or b""
+            image_name = str(getattr(image_file, "name", "") or f"page-{page_number}-image-{image_number}.png")
+            extracted = extract_text_from_image_bytes(image_bytes, filename=image_name)
+            ocr_text = re.sub(r"\s+", " ", str(extracted or "")).strip()
+            if not ocr_text:
+                continue
+
+            snippet = f"Page {page_number} diagram labels: {ocr_text}"
+            lowered = snippet.lower()
+            if query_terms and any(term in lowered for term in query_terms):
+                prioritized.append(snippet)
+            else:
+                supplemental.append(snippet)
+
+    combined = prioritized + supplemental
+    return "\n\n".join(combined[: max(1, int(max_pages or 1)) * max(1, int(max_images_per_page or 1))]).strip()
 
 
 def _get_chunking_config():
@@ -192,12 +237,18 @@ def _logical_index_for_type(chunk_type: str, modality: str = "text") -> str:
 def build_chunk_metadata(text: str, source_path: str, *, modality: str = "text") -> dict:
     chapter = _infer_chapter_from_path(source_path)
     chunk_type = classify_chunk_type(text)
+    normalized_modality = str(modality or "text").strip().lower() or "text"
+    lowered_text = str(text or "").lower()
+    is_diagram_label = normalized_modality in {"ocr", "image"} or any(
+        marker in lowered_text for marker in ("diagram labels", "figure", "label", "page ")
+    )
     return {
         "chapter": chapter,
         "topic": _infer_topic_from_text(text, fallback=chapter),
         "type": chunk_type,
-        "index_name": _logical_index_for_type(chunk_type, modality=modality),
-        "modality": str(modality or "text").strip().lower() or "text",
+        "index_name": _logical_index_for_type(chunk_type, modality=normalized_modality),
+        "modality": normalized_modality,
+        "is_diagram_label": bool(is_diagram_label),
     }
 
 
@@ -345,15 +396,14 @@ def ingest_pdf(file_path, model_name=None, use_llm_summary=True):
     document_title = os.path.splitext(os.path.basename(file_path))[0]
     source_name = os.path.basename(file_path)
     for index, chunk in enumerate(chunks, start=1):
-        enriched_chunk = (
-            f"Document: {document_title}\n"
-            f"Source: {source_name}\n"
-            f"Chunk {index}:\n{chunk}"
-        )
+        chunk_metadata = build_chunk_metadata(chunk, file_path, modality="text")
+        chunk_metadata["document_title"] = document_title
+        chunk_metadata["source_name"] = source_name
+        chunk_metadata["chunk_number"] = index
         add_doc(
-            enriched_chunk,
+            chunk,
             source=file_path,
-            metadata=build_chunk_metadata(chunk, file_path, modality="text"),
+            metadata=chunk_metadata,
         )
 
     print(f"✅ Ingested {len(chunks)} chunks + summary successfully")
@@ -388,19 +438,16 @@ def ingest_image(file_path: str, model_name=None) -> None:
 
     chunks = chunk_text(text)
     source_name = os.path.basename(file_path)
+    normalized_modality = "ocr" if modality in {"image", "ocr"} else modality
     for index, chunk in enumerate(chunks, start=1):
-        enriched_chunk = (
-            f"Image: {title}\n"
-            f"Source: {source_name}\n"
-            f"Modality: {modality}\n"
-            f"Keywords: {', '.join(map(str, keywords))}\n"
-            f"OCR Summary: {summary or 'No summary available.'}\n"
-            f"Chunk {index}:\n{chunk}"
-        )
-        chunk_metadata = build_chunk_metadata(chunk, file_path, modality="image")
+        chunk_metadata = build_chunk_metadata(chunk, file_path, modality=normalized_modality)
         chunk_metadata["topic"] = title or chunk_metadata.get("topic") or "image"
         chunk_metadata["keywords"] = [str(item) for item in keywords]
-        add_doc(enriched_chunk, source=file_path, metadata=chunk_metadata)
+        chunk_metadata["ocr_summary"] = summary or ""
+        chunk_metadata["document_title"] = title or source_name
+        chunk_metadata["source_name"] = source_name
+        chunk_metadata["chunk_number"] = index
+        add_doc(chunk, source=file_path, metadata=chunk_metadata)
 
     print(f"✅ Ingested {len(chunks)} OCR chunks from image successfully")
 
