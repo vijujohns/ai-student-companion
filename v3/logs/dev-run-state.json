@@ -1,0 +1,14 @@
+﻿{
+    "startedAt":  "2026-04-10T15:23:46.3729969+05:30",
+    "backendPid":  14480,
+    "frontendPid":  14520,
+    "logPid":  14304,
+    "appEnv":  "dev",
+    "debugMode":  false,
+    "background":  false,
+    "skipReindex":  true,
+    "reindexMode":  "skip",
+    "backendLog":  "D:\\GPT\\ai-student-companion\\v3\\logs\\backend-dev.log",
+    "frontendLog":  "D:\\GPT\\ai-student-companion\\v3\\logs\\frontend-dev.log",
+    "combinedLog":  "D:\\GPT\\ai-student-companion\\v3\\logs\\dev-console.log"
+}
