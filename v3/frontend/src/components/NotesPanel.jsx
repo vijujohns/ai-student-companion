@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FiBookOpen, FiFileText, FiLink, FiMenu, FiRefreshCw, FiSave, FiTrash2 } from "react-icons/fi";
+import { FiBookOpen, FiEdit, FiEye, FiEyeOff, FiFileText, FiLink, FiSave, FiTrash2 } from "react-icons/fi";
 import { apiFetch, parseApiError } from "../services/api";
 
 function formatNoteDate(value) {
@@ -205,13 +205,20 @@ function isModKey(event) {
   return Boolean(event.metaKey || event.ctrlKey);
 }
 
-export default function NotesPanel({ isActive = true }) {
+export default function NotesPanel({
+  isActive = true,
+  contextPillItems = [],
+  hasLinkedContent = false,
+  hasViewerContent = false,
+  isContextViewerVisible = false,
+  onToggleViewer = () => {},
+  onOpenContext = () => {},
+}) {
   const [notes, setNotes] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [draftTitle, setDraftTitle] = useState("");
   const [draftContent, setDraftContent] = useState("");
   const [editorSeed, setEditorSeed] = useState(0);
-  const [drawerOpen, setDrawerOpen] = useState(true);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -256,6 +263,7 @@ export default function NotesPanel({ isActive = true }) {
       if (nextNotes.length === 0) {
         setSelectedId(null);
         syncDrafts(null);
+        window.dispatchEvent(new CustomEvent("notes:selected", { detail: { selectedId: null } }));
         return;
       }
 
@@ -263,6 +271,7 @@ export default function NotesPanel({ isActive = true }) {
       const nextSelected = stillExists ? nextNotes.find((item) => String(item.id) === String(selectedId)) : nextNotes[0];
       setSelectedId(nextSelected?.id ?? null);
       syncDrafts(nextSelected);
+      window.dispatchEvent(new CustomEvent("notes:selected", { detail: { selectedId: String(nextSelected?.id || "") } }));
     } catch (err) {
       setError(err?.message || "Could not load your notes.");
     } finally {
@@ -280,15 +289,22 @@ export default function NotesPanel({ isActive = true }) {
         loadNotes();
       }
     };
+    const handleExternalSelection = (event) => {
+      const nextId = String(event?.detail?.selectedId || "").trim();
+      if (!nextId) return;
+      const nextNote = notes.find((item) => String(item.id) === nextId);
+      if (!nextNote) return;
+      setSelectedId(nextId);
+      syncDrafts(nextNote);
+      setNotice("");
+    };
     window.addEventListener("notes:updated", handleNotesUpdated);
-    return () => window.removeEventListener("notes:updated", handleNotesUpdated);
-  }, [isActive, loadNotes]);
-
-  const handleSelectNote = (note) => {
-    setSelectedId(note.id);
-    syncDrafts(note);
-    setNotice("");
-  };
+    window.addEventListener("notes:selected", handleExternalSelection);
+    return () => {
+      window.removeEventListener("notes:updated", handleNotesUpdated);
+      window.removeEventListener("notes:selected", handleExternalSelection);
+    };
+  }, [isActive, loadNotes, notes, syncDrafts]);
 
   const handleSave = async () => {
     if (!selectedNote) return;
@@ -341,7 +357,7 @@ export default function NotesPanel({ isActive = true }) {
   useEffect(() => {
     if (!editorRef.current) return;
     editorRef.current.innerHTML = selectedNote ? markdownToEditableHtml(draftContent) : "";
-  }, [editorSeed, selectedNote, draftContent]);
+  }, [editorSeed, selectedNote]);
 
   const syncDraftFromEditor = useCallback(() => {
     if (!editorRef.current) return;
@@ -429,201 +445,122 @@ export default function NotesPanel({ isActive = true }) {
   }, [applyEditorCommand, handleSave, openLinkForm, selectedNote]);
 
   return (
-    <div className={`workspace-shell ${drawerOpen ? "" : "workspace-shell--sidebar-collapsed"}`}>
-      <aside className={`workspace-sidebar ${drawerOpen ? "" : "workspace-sidebar--collapsed"}`} aria-label="Saved notes sidebar">
-        <div className="workspace-sidebar__header">
-          <button
-            type="button"
-            className="icon-button icon-button--ghost workspace-sidebar__toggle"
-            onClick={() => setDrawerOpen((prev) => !prev)}
-            title={drawerOpen ? "Collapse sidebar" : "Expand sidebar"}
-          >
-            <FiMenu />
-          </button>
-          <div className="workspace-sidebar__brand">
-            {drawerOpen ? <span>Saved summaries and note revisions</span> : null}
+    <div className="workspace-panel notes-panel">
+      <div className="workspace-panel__header">
+        <div>
+          <div className="workspace-panel__title-row">
+            <h3>Revision note</h3>
+            <div className="workspace-panel__eyebrow">
+              <FiFileText />
+              <span>Document editor</span>
+            </div>
           </div>
+          <p className="notes-panel__description">Edit the note directly in a single formatted document surface.</p>
         </div>
+      </div>
 
-        {drawerOpen ? (
+      <div className="panel-grid panel-grid--stacked notes-panel__editor-shell">
+        {selectedNote ? (
           <>
-            <div className="workspace-sidebar__actions">
-              <button type="button" className="secondary-button secondary-button--block" onClick={loadNotes} disabled={loading}>
-                <FiRefreshCw />
-                <span>{loading ? "Refreshing..." : "Refresh Notes"}</span>
-              </button>
-            </div>
-
-            <div className="workspace-sidebar__section">
-              <div className="workspace-sidebar__section-title">
-                <FiBookOpen />
-                <span>Saved Notes</span>
+            <section className="panel-card">
+              <div className="notes-panel__title-row notes-panel__top-row">
+                <label className="notes-panel__title-wrap notes-panel__title-wrap--wide">
+                  <span className="notes-panel__field-label">Title</span>
+                  <input
+                    className="notes-panel__title-input"
+                    value={draftTitle}
+                    onChange={(event) => setDraftTitle(event.target.value)}
+                    placeholder="Enter note title"
+                  />
+                </label>
+                <div className="notes-panel__header-actions">
+                  <button type="button" className="primary-button" onClick={handleSave} disabled={saving || !selectedNote}>
+                    <FiSave />
+                    <span>{saving ? "Saving..." : "Save Note"}</span>
+                  </button>
+                  <button type="button" className="secondary-button" onClick={handleDelete} disabled={saving || !selectedNote}>
+                    <FiTrash2 />
+                    <span>Delete</span>
+                  </button>
+                </div>
               </div>
-              <div className="sidebar-note">{notes.length} saved notes ready to open and edit.</div>
 
-              {error ? <p className="sidebar-note" role="alert">{error}</p> : null}
-              {notice ? <p className="sidebar-note" role="status">{notice}</p> : null}
+              <div className="notes-panel__document-footer notes-panel__meta-row">
+                <span>{formatNoteDate(selectedNote.updated_at)}</span>
+                <span>{wordCount} words</span>
+              </div>
+            </section>
 
-              <div className="session-list notes-panel__session-list">
-              {loading && notes.length === 0 ? (
-                <div className="sidebar-note">
-                  <span>Loading notes…</span>
+            <section className="panel-card panel-card--stretch">
+              <label className="notes-panel__content-wrap">
+                <span className="notes-panel__field-label">Content</span>
+                <div className="notes-panel__format-toolbar" role="toolbar" aria-label="Formatting tools">
+                  <button type="button" className="secondary-button notes-panel__format-button" onClick={() => applyEditorCommand("bold")}> 
+                    Bold
+                  </button>
+                  <button type="button" className="secondary-button notes-panel__format-button" onClick={() => applyEditorCommand("italic")}> 
+                    Italic
+                  </button>
+                  <button type="button" className="secondary-button notes-panel__format-button" onClick={() => handleBlockFormat("h2")}> 
+                    H2
+                  </button>
+                  <button type="button" className="secondary-button notes-panel__format-button" onClick={() => handleBlockFormat("h3")}> 
+                    H3
+                  </button>
+                  <button type="button" className="secondary-button notes-panel__format-button" onClick={() => applyEditorCommand("insertUnorderedList")}> 
+                    Bullet
+                  </button>
+                  <button type="button" className="secondary-button notes-panel__format-button" onClick={() => applyEditorCommand("insertOrderedList")}> 
+                    Numbered
+                  </button>
+                  <button type="button" className="secondary-button notes-panel__format-button" onClick={() => handleBlockFormat("blockquote")}> 
+                    Quote
+                  </button>
+                  <button type="button" className="secondary-button notes-panel__format-button" onClick={openLinkForm}>
+                    <FiLink />
+                    <span>Link</span>
+                  </button>
                 </div>
-              ) : notes.length === 0 ? (
-                <div className="progress-plan-card notes-panel__empty">
-                  <p className="progress-plan-card__headline">No saved notes yet.</p>
-                  <p className="sidebar-note">Your saved notes will appear here after you save a summary from chat.</p>
-                </div>
-              ) : (
-                notes.map((note) => (
-                  <div key={note.id} className={`session-item ${selectedNote?.id === note.id ? "active" : ""}`}>
-                    <button
-                      type="button"
-                      className="session-title notes-panel__session-button"
-                      onClick={() => handleSelectNote(note)}
-                      title={note.title || "Untitled note"}
-                    >
-                      <FiFileText className="session-icon" size={14} />
-                      <span className="session-text notes-panel__session-title">{note.title || "Untitled note"}</span>
+
+                {showLinkForm ? (
+                  <div className="notes-panel__link-form">
+                    <input
+                      className="notes-panel__link-input"
+                      value={linkDraft.text}
+                      onChange={(event) => setLinkDraft((prev) => ({ ...prev, text: event.target.value }))}
+                      placeholder="Link text"
+                    />
+                    <input
+                      className="notes-panel__link-input"
+                      value={linkDraft.url}
+                      onChange={(event) => setLinkDraft((prev) => ({ ...prev, url: event.target.value }))}
+                      placeholder="https://example.com"
+                    />
+                    <button type="button" className="secondary-button notes-panel__format-button" onClick={handleInsertLink}>
+                      Insert
                     </button>
-                    <div className="notes-panel__session-meta">{formatNoteDate(note.updated_at)}</div>
                   </div>
-                ))
-              )}
-              </div>
-            </div>
+                ) : null}
+
+                <div
+                  ref={editorRef}
+                  className="notes-panel__editor notes-panel__editor--document notes-panel__editor--rich"
+                  contentEditable
+                  suppressContentEditableWarning
+                  data-placeholder="Edit your summary notes here"
+                  onInput={handleEditorInput}
+                />
+              </label>
+            </section>
           </>
         ) : (
-          <div className="workspace-sidebar__compact-actions">
-            <div className="workspace-sidebar__compact-group">
-              <button type="button" className="icon-button icon-button--ghost" onClick={loadNotes} title="Refresh notes">
-                <FiRefreshCw />
-              </button>
-            </div>
-            <div className="workspace-sidebar__compact-group workspace-sidebar__compact-group--modes">
-              <button type="button" className="icon-button icon-button--ghost active" title={`${notes.length} saved notes`}>
-                <FiBookOpen />
-              </button>
-            </div>
-          </div>
+          <section className="panel-card notes-panel__empty-state">
+            <FiBookOpen />
+            <strong>Select a note to open it in the editor.</strong>
+            <span>Your saved summaries will open here in a document-style workspace.</span>
+          </section>
         )}
-      </aside>
-
-      <main className="workspace-main">
-        <section className="workspace-panel progress-panel notes-panel">
-          <div className="progress-panel__body">
-            <div className="notes-panel__editor-shell">
-              {selectedNote ? (
-              <>
-                <div className="notes-panel__document-toolbar">
-                  <div>
-                    <div className="workspace-panel__eyebrow">
-                      <FiFileText />
-                      <span>Document editor</span>
-                    </div>
-                    <h3>Revision note</h3>
-                    <p>Edit the note directly in a single formatted document surface.</p>
-                  </div>
-                  <div className="progress-toolbar__actions notes-panel__editor-actions">
-                    <button type="button" className="secondary-button" onClick={handleSave} disabled={saving}>
-                      <FiSave />
-                      <span>{saving ? "Saving..." : "Save changes"}</span>
-                    </button>
-                    <button type="button" className="secondary-button" onClick={handleDelete} disabled={saving}>
-                      <FiTrash2 />
-                      <span>Delete note</span>
-                    </button>
-                  </div>
-                </div>
-
-                <div className="notes-panel__document">
-                  <label className="notes-panel__title-wrap">
-                    <span className="notes-panel__field-label">Title</span>
-                    <input
-                      className="notes-panel__title-input"
-                      value={draftTitle}
-                      onChange={(event) => setDraftTitle(event.target.value)}
-                      placeholder="Enter note title"
-                    />
-                  </label>
-
-                  <label className="notes-panel__content-wrap">
-                    <span className="notes-panel__field-label">Content</span>
-                    <div className="notes-panel__format-toolbar" role="toolbar" aria-label="Formatting tools">
-                      <button type="button" className="secondary-button notes-panel__format-button" onClick={() => applyEditorCommand("bold")}>
-                        Bold
-                      </button>
-                      <button type="button" className="secondary-button notes-panel__format-button" onClick={() => applyEditorCommand("italic")}>
-                        Italic
-                      </button>
-                      <button type="button" className="secondary-button notes-panel__format-button" onClick={() => handleBlockFormat("h2")}>
-                        H2
-                      </button>
-                      <button type="button" className="secondary-button notes-panel__format-button" onClick={() => handleBlockFormat("h3")}>
-                        H3
-                      </button>
-                      <button type="button" className="secondary-button notes-panel__format-button" onClick={() => applyEditorCommand("insertUnorderedList")}>
-                        Bullet
-                      </button>
-                      <button type="button" className="secondary-button notes-panel__format-button" onClick={() => applyEditorCommand("insertOrderedList")}>
-                        Numbered
-                      </button>
-                      <button type="button" className="secondary-button notes-panel__format-button" onClick={() => handleBlockFormat("blockquote")}>
-                        Quote
-                      </button>
-                      <button type="button" className="secondary-button notes-panel__format-button" onClick={openLinkForm}>
-                        <FiLink />
-                        <span>Link</span>
-                      </button>
-                    </div>
-
-                    {showLinkForm ? (
-                      <div className="notes-panel__link-form">
-                        <input
-                          className="notes-panel__link-input"
-                          value={linkDraft.text}
-                          onChange={(event) => setLinkDraft((prev) => ({ ...prev, text: event.target.value }))}
-                          placeholder="Link text"
-                        />
-                        <input
-                          className="notes-panel__link-input"
-                          value={linkDraft.url}
-                          onChange={(event) => setLinkDraft((prev) => ({ ...prev, url: event.target.value }))}
-                          placeholder="https://example.com"
-                        />
-                        <button type="button" className="secondary-button notes-panel__format-button" onClick={handleInsertLink}>
-                          Insert
-                        </button>
-                      </div>
-                    ) : null}
-
-                    <div
-                      ref={editorRef}
-                      className="notes-panel__editor notes-panel__editor--document notes-panel__editor--rich"
-                      contentEditable
-                      suppressContentEditableWarning
-                      data-placeholder="Edit your summary notes here"
-                      onInput={handleEditorInput}
-                    />
-                  </label>
-
-                  <div className="notes-panel__document-footer">
-                    <span>{formatNoteDate(selectedNote.updated_at)}</span>
-                    <span>{wordCount} words</span>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div className="notes-panel__empty-state">
-                <FiBookOpen />
-                <strong>Select a note to open it in the editor.</strong>
-                <span>Your saved summaries will open here in a document-style workspace.</span>
-              </div>
-            )}
-            </div>
-          </div>
-        </section>
-      </main>
+      </div>
     </div>
   );
 }

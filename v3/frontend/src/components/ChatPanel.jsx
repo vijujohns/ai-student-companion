@@ -431,6 +431,167 @@ function buildFailedAdminStatus(actionLabel, detailText) {
   };
 }
 
+function NotesSidebarSection({ isActive = false, onNoteSelected = null }) {
+  const [notes, setNotes] = useState([]);
+  const [selectedId, setSelectedId] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const loadNotes = useCallback(async () => {
+    if (!isActive) return;
+    setLoading(true);
+    setError("");
+
+    try {
+      const res = await apiFetch("/notes", { method: "GET" });
+      if (!res.ok) {
+        throw new Error(await parseApiError(res, "Could not load your notes."));
+      }
+
+      const payload = await res.json();
+      const nextNotes = Array.isArray(payload?.notes) ? payload.notes : [];
+      setNotes(nextNotes);
+    } catch (err) {
+      setError(err?.message || "Could not load your notes.");
+    } finally {
+      setLoading(false);
+    }
+  }, [isActive]);
+
+  useEffect(() => {
+    if (!isActive) return;
+    loadNotes();
+  }, [isActive, loadNotes]);
+
+  useEffect(() => {
+    if (!isActive) return undefined;
+
+    const handleNotesUpdated = () => loadNotes();
+    const handleNotesSelected = (event) => {
+      const nextId = String(event?.detail?.selectedId || "").trim();
+      setSelectedId(nextId);
+    };
+
+    window.addEventListener("notes:updated", handleNotesUpdated);
+    window.addEventListener("notes:selected", handleNotesSelected);
+
+    return () => {
+      window.removeEventListener("notes:updated", handleNotesUpdated);
+      window.removeEventListener("notes:selected", handleNotesSelected);
+    };
+  }, [isActive, loadNotes]);
+
+  const handleSelectNote = (note) => {
+    const nextId = String(note.id || "");
+    setSelectedId(nextId);
+    window.dispatchEvent(new CustomEvent("notes:selected", { detail: { selectedId: nextId } }));
+    if (typeof onNoteSelected === "function") {
+      onNoteSelected(note);
+    }
+  };
+
+  const handleRenameNote = async (note) => {
+    const newTitle = window.prompt("Rename note:", note.title || "");
+    if (!newTitle || newTitle.trim() === note.title) return;
+
+    try {
+      const res = await apiFetch(`/notes/${encodeURIComponent(note.id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: newTitle.trim(), content: note.content }),
+      });
+      if (!res.ok) {
+        throw new Error(await parseApiError(res, "Could not rename the note."));
+      }
+
+      setNotice("Note renamed.");
+      window.dispatchEvent(new CustomEvent("notes:updated"));
+      await loadNotes();
+      if (selectedId === String(note.id)) {
+        window.dispatchEvent(new CustomEvent("notes:selected", { detail: { selectedId: String(note.id) } }));
+      }
+    } catch (err) {
+      setError(err?.message || "Could not rename the note.");
+    }
+  };
+
+  const handleDeleteNote = async (note) => {
+    if (!window.confirm(`Delete "${note.title || "Untitled note"}"? This action cannot be undone.`)) return;
+
+    try {
+      const res = await apiFetch(`/notes/${encodeURIComponent(note.id)}`, { method: "DELETE" });
+      if (!res.ok) {
+        throw new Error(await parseApiError(res, "Could not delete the note."));
+      }
+
+      setNotice("Note deleted.");
+      window.dispatchEvent(new CustomEvent("notes:updated"));
+      await loadNotes();
+    } catch (err) {
+      setError(err?.message || "Could not delete the note.");
+    }
+  };
+
+  return (
+    <div className="workspace-sidebar__section">
+      <div className="workspace-sidebar__section-title">
+        <FiBookOpen />
+        <span>Saved Notes</span>
+      </div>
+
+      <button
+        type="button"
+        className="secondary-button secondary-button--block"
+        onClick={loadNotes}
+        disabled={loading}
+      >
+        <FiRefreshCw />
+        <span>{loading ? "Refreshing..." : "Refresh Notes"}</span>
+      </button>
+
+      <div className="sidebar-note">{notes.length} saved notes ready to open and edit.</div>
+      {error ? <p className="sidebar-note" role="alert">{error}</p> : null}
+      {notice ? <p className="sidebar-note" role="status">{notice}</p> : null}
+
+      <div className="session-list">
+        {loading && notes.length === 0 ? (
+          <div className="sidebar-note">
+            <span>Loading notes…</span>
+          </div>
+        ) : notes.length === 0 ? (
+          <div className="progress-plan-card notes-panel__empty">
+            <p className="progress-plan-card__headline">No saved notes yet.</p>
+            <p className="sidebar-note">Your saved notes will appear here after you save a summary from chat.</p>
+          </div>
+        ) : (
+          notes.map((note) => (
+            <div key={note.id} className={`session-item ${selectedId === String(note.id) ? "active" : ""}`}>
+              <button
+                type="button"
+                className="session-title"
+                onClick={() => handleSelectNote(note)}
+                title={note.title || "Untitled note"}
+              >
+                <FiFileText className="session-icon" size={14} />
+                <span className="session-text">{note.title || "Untitled note"}</span>
+              </button>
+              <div className="session-actions">
+                <button type="button" className="icon-button icon-button--ghost" onClick={() => handleRenameNote(note)}>
+                  <FiEdit />
+                </button>
+                <button type="button" className="icon-button icon-button--ghost" onClick={() => handleDeleteNote(note)}>
+                  <FiTrash2 />
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 const LEARNING_CONTEXT_STORAGE_KEY = "learning_context_v1";
 const CONTEXT_REQUIRED_TABS = ["lesson", "quiz", "flashcards"];
 
@@ -623,7 +784,7 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
         : isAdminView
           ? "Admin, billing, and oversight tools"
           : "AI-powered learning workspace";
-  const shouldShowContextBar = ["chat", "lesson", "quiz", "flashcards", "assessment"].includes(activeTab);
+  const shouldShowContextBar = ["chat", "lesson", "quiz", "flashcards", "assessment", "notes"].includes(activeTab);
   const isExplorerMode = contextMode === "explorer";
   const hasRequiredStudyContext = Boolean(selectedClass && selectedSubject);
   const requiresStructuredContext = CONTEXT_REQUIRED_TABS.includes(activeTab);
@@ -2208,6 +2369,17 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
                 </div>
               </div>
             )}
+
+            {activeTab === "notes" && (
+              <NotesSidebarSection 
+                isActive={activeTab === "notes"} 
+                onNoteSelected={(note) => {
+                  if (note?.selected_content) {
+                    setSelectedContent(note.selected_content);
+                  }
+                }}
+              />
+            )}
           </>
         ) : (
           <>
@@ -2690,7 +2862,15 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
           </div>
 
           <div style={{ display: activeTab === "notes" ? "flex" : "none", flex: 1, minHeight: 0 }}>
-            <NotesPanel isActive={activeTab === "notes"} />
+            <NotesPanel
+              isActive={activeTab === "notes"}
+              contextPillItems={contextPillItems}
+              hasLinkedContent={Boolean(selectedContent)}
+              hasViewerContent={hasViewerContent}
+              isContextViewerVisible={shouldShowViewer}
+              onToggleViewer={() => setIsViewerVisible((prev) => !prev)}
+              onOpenContext={() => openContextModal("Choose your class and subject to personalize the workspace.")}
+            />
           </div>
 
           <div style={{ display: activeTab === "assignments" ? "flex" : "none", flex: 1, minHeight: 0 }}>
