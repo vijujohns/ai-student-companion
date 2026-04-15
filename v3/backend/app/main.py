@@ -167,8 +167,18 @@ async def lifespan(app: FastAPI):
     init_db()
     dlog("STARTUP", "Database initialized")
 
-    recovery = recover_indexing_jobs()
-    dlog("STARTUP", "Indexing jobs recovered", recovered=recovery["recovered"], failed=recovery["failed"])
+    recovery_enabled = str(os.getenv("DISABLE_INDEX_JOB_RECOVERY", "")).strip().lower() not in {"1", "true", "yes", "on"}
+    if get_app_env() == "test":
+        recovery_enabled = False
+
+    if recovery_enabled:
+        try:
+            recovery = recover_indexing_jobs()
+            dlog("STARTUP", "Indexing jobs recovered", recovered=recovery["recovered"], failed=recovery["failed"])
+        except Exception as exc:
+            dlog("STARTUP", "Indexing job recovery skipped after failure", error=str(exc))
+    else:
+        dlog("STARTUP", "Indexing job recovery disabled", app_env=get_app_env())
 
     _schedule_startup_reindex(startup_reindex_mode)
 

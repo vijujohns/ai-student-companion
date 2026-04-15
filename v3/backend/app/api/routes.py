@@ -247,7 +247,7 @@ def ask(request: AskRequest, user=Depends(get_current_user)):
     _consume_quota_or_raise(user, "ask")
 
     try:
-        use_generator_executor = bool(request.task) or bool(routed_task.explicit)
+        use_generator_executor = bool(request.task) or bool(routed_task.explicit) or routed_task.model_task == "summary"
         if is_utility_task(routed_task.model_task):
             ans = execute_utility_task(
                 task=routed_task.model_task,

@@ -169,7 +169,7 @@ async def websocket_ask(ws: WebSocket):
             keepalive_task = asyncio.create_task(send_waiting_status(ws, keepalive_stop))
             await send_json(ws, {"type": "status", "data": "Preparing your answer..."})
             try:
-                use_generator_executor = bool(requested_task) or bool(routed_task.explicit)
+                use_generator_executor = bool(requested_task) or bool(routed_task.explicit) or routed_task.model_task == "summary"
                 if is_utility_task(routed_task.model_task):
                     generated_text = execute_utility_task(
                         task=routed_task.model_task,

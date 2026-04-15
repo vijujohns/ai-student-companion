@@ -6,19 +6,22 @@ from .db import get_connection
 
 
 def get_message(message_id: str) -> Dict[str, str]:
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT message_id, level, user_friendly_text
-        FROM message_catalog
-        WHERE message_id=?
-        LIMIT 1
-        """,
-        (message_id,),
-    )
-    row = cursor.fetchone()
-    conn.close()
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT message_id, level, user_friendly_text
+            FROM message_catalog
+            WHERE message_id=?
+            LIMIT 1
+            """,
+            (message_id,),
+        )
+        row = cursor.fetchone()
+        conn.close()
+    except Exception:
+        row = None
 
     if not row:
         return {

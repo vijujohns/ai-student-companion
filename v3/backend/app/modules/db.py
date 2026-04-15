@@ -6,11 +6,36 @@ import sqlite3
 import os
 import traceback
 import json
+import tempfile
 from datetime import datetime
+
+from ..core.config_loader import get_app_env
 
 # 🔥 Resolve project root dynamically
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
-DB_FILE = os.path.join(BASE_DIR, "data", "app.db")
+
+
+def _resolve_db_file() -> str:
+    configured = str(os.getenv("APP_DB_FILE", "") or "").strip()
+    if configured:
+        return os.path.abspath(configured)
+
+    app_env = get_app_env()
+    if app_env == "test":
+        worker_id = str(os.getenv("PYTEST_XDIST_WORKER", "") or "").strip().lower()
+        process_id = str(os.getpid())
+        suffix_parts = [part for part in (worker_id, process_id) if part]
+        suffix = f".{'.'.join(suffix_parts)}" if suffix_parts else ""
+        return os.path.join(tempfile.gettempdir(), f"ai-tutor{suffix}.db")
+
+    return os.path.join(BASE_DIR, "data", "app.db")
+
+
+DB_FILE = _resolve_db_file()
+
+
+def get_db_file() -> str:
+    return _resolve_db_file()
 
 
 def get_connection():
@@ -19,15 +44,23 @@ def get_connection():
     Ensures directory exists and handles errors.
     """
     try:
-        os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
+        db_file = get_db_file()
+        os.makedirs(os.path.dirname(db_file), exist_ok=True)
     except Exception as e:
         print(f"❌ Failed to create DB directory: {e}")
         traceback.print_exc()
         raise
 
     try:
-        conn = sqlite3.connect(DB_FILE, timeout=10, check_same_thread=False)
+        conn = sqlite3.connect(db_file, timeout=10, check_same_thread=False)
         conn.row_factory = sqlite3.Row  # return rows as dict-like
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA foreign_keys = ON")
+        cursor.execute("PRAGMA busy_timeout = 10000")
+        if get_app_env() != "test":
+            cursor.execute("PRAGMA journal_mode = WAL")
+            cursor.execute("PRAGMA synchronous = NORMAL")
+        cursor.close()
         return conn
     except sqlite3.Error as e:
         print(f"❌ SQLite connection error: {e}")
@@ -425,7 +458,7 @@ def init_db():
     except Exception as e:
         print(f"⚠️ Error initializing default users: {e}")
 
-    print(f"✅ Database initialized at: {DB_FILE}")
+    print(f"✅ Database initialized at: {get_db_file()}")
 
 
 def migrate_user_schema():
