@@ -263,6 +263,22 @@ class SetSessionContentRequest(BaseModel):
     )
 
 
+class UploadedFileRenameRequest(BaseModel):
+    """Rename an uploaded document without changing its owning scope."""
+
+    display_name: str = Field(..., min_length=1, max_length=120)
+
+    @field_validator("display_name")
+    @classmethod
+    def validate_display_name(cls, v: str) -> str:
+        value = (v or "").strip()
+        if not value:
+            raise ValueError("Display name is required.")
+        if not re.match(r"^[A-Za-z0-9-]+$", value):
+            raise ValueError("Use only letters, numbers, and hyphens.")
+        return value
+
+
 class ContextSelectionRequest(BaseModel):
     """Persist the user's global learning context or Explorer Mode selection."""
 
@@ -576,6 +592,7 @@ class ReminderSettingsRequest(BaseModel):
     enabled: bool = True
     frequency: str = Field("daily", max_length=40)
     muted_ids: List[str] = Field(default_factory=list)
+    delivery_scope: Optional[str] = Field("local-only", max_length=50)
 
     @field_validator("frequency")
     @classmethod
@@ -590,6 +607,15 @@ class ReminderSettingsRequest(BaseModel):
     @classmethod
     def validate_muted_ids(cls, v: List[str]) -> List[str]:
         return [item.strip() for item in (v or []) if isinstance(item, str) and item.strip()][:25]
+
+    @field_validator("delivery_scope")
+    @classmethod
+    def validate_delivery_scope(cls, v: Optional[str]) -> str:
+        value = (v or "local-only").strip().lower()
+        allowed = {"local-only", "server", "hybrid"}
+        if value not in allowed:
+            raise ValueError(f"Delivery scope must be one of {sorted(allowed)}.")
+        return value
 
 
 class PreferencesUpdateRequest(BaseModel):

@@ -35,6 +35,18 @@ describe("App", () => {
     });
   });
 
+  it("provides a skip link and accessible main landmark", async () => {
+    render(<App />);
+
+    expect(screen.getByRole("link", { name: /skip to main content/i })).toBeInTheDocument();
+    expect(screen.getByRole("main", { name: /application content/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /skip to main content/i })).toHaveAttribute("href", "#main-content");
+
+    await waitFor(() => {
+      expect(screen.getByText("Login Screen")).toBeInTheDocument();
+    });
+  });
+
   it("renders workspace after successful session bootstrap", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,

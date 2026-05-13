@@ -456,7 +456,7 @@ def _build_summary_step(chapter: str, steps: List[Dict]) -> Dict[str, object]:
     preview = ", ".join(topic_titles[:4]) if topic_titles else chapter
     bullets = _normalize_list_items([f"Quick revision: remember the key idea from {title}" for title in topic_titles[:6]])
     return {
-        "id": len(steps) + 1,
+        "step_id": len(steps) + 1,
         "title": "Summary & Quick Revision",
         "type": "revision",
         "status": "pending",
@@ -470,7 +470,7 @@ def _ensure_card_requirements(steps: List[Dict], chapter: str) -> List[Dict]:
     prepared = []
     for idx, step in enumerate(steps, start=1):
         current = {
-            "id": int(step.get("id", idx)),
+            "step_id": int(step.get("step_id", step.get("id", idx))),
             "title": str(step.get("title", f"Step {idx}")),
             "type": str(step.get("type", "concept")),
             "status": str(step.get("status", "pending")),
@@ -509,7 +509,7 @@ def _ensure_card_requirements(steps: List[Dict], chapter: str) -> List[Dict]:
 
     final_steps = [*main_steps, summary_step]
     for idx, step in enumerate(final_steps, start=1):
-        step["id"] = idx
+        step["step_id"] = idx
     return final_steps
 
 
@@ -571,7 +571,7 @@ def _normalize_steps(steps: List[Dict]) -> List[Dict]:
         numbered = _normalize_list_items(step.get("numbered", []))
         normalized.append(
             {
-                "id": int(step.get("id", idx)),
+                "step_id": int(step.get("id", idx)),
                 "title": str(step.get("title", f"Step {idx}")),
                 "type": str(step.get("type", "concept")),
                 "status": str(step.get("status", "pending")),
@@ -948,6 +948,13 @@ def get_lesson_plan(user_id: str, session_id: str) -> Optional[Dict]:
         return None
     payload = json.loads(row[1])
     payload["lesson_plan_id"] = int(row[0])
+    
+    # Transform steps to use step_id instead of id for API compatibility
+    if "steps" in payload:
+        for step in payload["steps"]:
+            if "id" in step and "step_id" not in step:
+                step["step_id"] = step.pop("id")
+    
     return payload
 
 

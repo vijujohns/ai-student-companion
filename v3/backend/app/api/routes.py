@@ -2,7 +2,7 @@
 REST APIs
 """
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Response, UploadFile, File, Form
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, UploadFile, File, Form
 from ..modules.rag import generate_answer
 from ..modules.history import get_history
 from ..modules.db import get_connection
@@ -10,79 +10,46 @@ from ..modules.dependencies import require_role, get_current_user, validate_sess
 from ..modules.messages import envelope, get_message
 from ..modules.policy import consume_quota, release_usage
 from ..modules.adapters import get_default_service_registry
-from ..modules.assessment import (
-    generate_subject_quiz,
-    generate_question_paper,
-    get_assessment_paper,
-    list_assessment_papers,
-    record_assessment_attempt,
-)
-from ..modules.file_management import (
-    resolve_content_reference,
-    upload_pdf,
-    upload_file,
-)
 import uuid
-from typing import Optional
+from typing import Any, Callable, Optional
 from fastapi.responses import FileResponse
 from urllib.parse import unquote
 import json
 import os
 from ..modules.flashcards import router as flashcards_router
-from ..modules.lesson_plan import (
-    generate_lesson_plan,
-    get_lesson_plan,
-    get_lesson_plan_cards,
-    complete_lesson_card,
-    get_card_for_user,
-    update_step_progress,
-    get_next_step,
-    list_lesson_sessions,
-    rename_lesson_session,
-    delete_lesson_session,
-)
-
-from ..modules.quiz import (
-    generate_quiz,
-    get_quiz,
-    submit_quiz_answer,
-    list_quiz_sessions,
-    get_latest_quiz_for_session,
-    rename_quiz_session,
-    delete_quiz_session,
-)
-from ..modules.artifacts import (
-    generate_card_quiz,
-    generate_card_flashcards,
-    get_artifact,
-    update_artifact_meta,
-    list_flashcard_sessions,
-    get_latest_flashcard_artifact_for_session,
-    rename_flashcard_session,
-    delete_flashcard_session,
-)
-from ..modules.model_manager import get_active_model_profile_key, get_model_profiles, set_active_model_profile_key
-from ..modules.notes import (
-    delete_note as delete_user_note,
-    get_note as get_user_note,
-    list_notes as list_user_notes,
-    save_note as save_user_note,
-    update_note as update_user_note,
+from ..modules.model_manager import (
+    CLOUD_MODELS,
+    LOCAL_MODELS,
+    get_active_model_profile_key,
+    get_model_profiles,
+    is_model_available,
+    list_models,
+    set_active_model_profile_key,
 )
 from ..modules.task_router import route_task
 from ..modules.generator_executor import execute_generator_task, is_generator_task
 from ..modules.utility_executor import execute_utility_task, is_utility_task
+from .common import _consume_quota_or_raise, _log_progress_activity_safe, services
+from .health import router as health_router
+from .ask import router as ask_router
+from .admin import router as admin_router
+from .auth_session import router as auth_session_router
+from .knowledge import router as knowledge_router
+from .lesson_plan import router as lesson_plan_router
+from .quiz import router as quiz_router
+from .assessment import router as assessment_router
+from .progress import router as progress_router
+from .collaboration import router as collaboration_router
+from .subscription import router as subscription_router
 
 # ✅ Import Pydantic schemas for validation
 from ..schemas.request import (
-    LoginRequest, AskRequest, RenameSessionRequest, SetSessionContentRequest, ContextSelectionRequest,
+    AskRequest, ContextSelectionRequest,
     LessonPlanCreateRequest, LessonProgressRequest, QuizGenerateRequest,
-    QuizSubmitRequest, FlashcardCreateRequest, ArtifactGenerateRequest, RegisterRequest, ResetPasswordRequest,
-    ProfileUpdateRequest, SubscriptionQuoteRequest, SubscriptionActivateRequest,
+    QuizSubmitRequest, FlashcardCreateRequest, ArtifactGenerateRequest, RenameSessionRequest,
     SubjectQuizRequest, QuestionPaperRequest, AssessmentAttemptRequest, LogActivityRequest,
-    TranslateRequest, PreferencesUpdateRequest, AdminModelProfileUpdateRequest, NoteSaveRequest, NoteUpdateRequest,
-    LinkStudentRequest, CollaborationNoteRequest, CollaborationNoteUpdateRequest, MentorAssignmentRequest,
-    MentorAssignmentUpdateRequest, StudyPlanItemUpdateRequest,
+    TranslateRequest, PreferencesUpdateRequest, AdminModelProfileUpdateRequest,
+    StudyPlanItemUpdateRequest,
 )
 from ..schemas.response import (
     LoginResponse, AskResponse, SessionListResponse, SessionContentResponse,
@@ -91,7 +58,6 @@ from ..schemas.response import (
 )
 
 router = APIRouter()
-services = get_default_service_registry()
 
 DEFAULT_REMINDER_SETTINGS = {
     "enabled": True,
@@ -100,6 +66,117 @@ DEFAULT_REMINDER_SETTINGS = {
 }
 
 router.include_router(flashcards_router)
+router.include_router(auth_session_router)
+router.include_router(health_router)
+router.include_router(ask_router)
+router.include_router(knowledge_router)
+router.include_router(lesson_plan_router)
+router.include_router(quiz_router)
+router.include_router(assessment_router)
+router.include_router(admin_router)
+router.include_router(progress_router)
+router.include_router(collaboration_router)
+router.include_router(subscription_router)
+
+
+def _health_result(status: str = "ok", **details: Any) -> dict:
+    result = {"status": status}
+    result.update(details)
+    return result
+
+
+def _safe_health_check(check: Callable[[], dict]) -> dict:
+    try:
+        return check()
+    except Exception as exc:
+        return _health_result("degraded", error=str(exc))
+
+
+def _health_check_database() -> dict:
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        cursor.fetchone()
+    finally:
+        conn.close()
+    return _health_result("ok", reachable=True)
+
+
+def _health_check_cache() -> dict:
+    from ..modules import cache
+
+    client = getattr(cache, "r", None)
+    if client is None:
+        client_type = "uninitialized"
+    elif client.__class__.__name__ == "InMemoryCache":
+        client_type = "in-memory"
+    else:
+        client_type = "redis"
+
+    breaker = getattr(cache, "CIRCUIT_BREAKER", {}) or {}
+    status = "degraded" if breaker.get("is_open") or client_type in {"in-memory", "uninitialized"} else "ok"
+    return _health_result(
+        status,
+        client_type=client_type,
+        redis_host=str(getattr(cache, "REDIS_HOST", "")),
+        redis_port=int(getattr(cache, "REDIS_PORT", 0) or 0),
+        circuit_open=bool(breaker.get("is_open")),
+        failure_count=int(breaker.get("failure_count") or 0),
+    )
+
+
+def _health_check_faiss() -> dict:
+    from ..modules import faiss_store
+
+    logical_indexes = getattr(faiss_store, "logical_indexes", {}) or {}
+    documents = getattr(faiss_store, "documents", []) or []
+    return _health_result(
+        "ok",
+        documents_count=len(documents),
+        logical_indexes_count=len(logical_indexes),
+        index_file_exists=os.path.exists(getattr(faiss_store, "INDEX_FILE", "")),
+        documents_file_exists=os.path.exists(getattr(faiss_store, "DOC_FILE", "")),
+        metadata_file_exists=os.path.exists(getattr(faiss_store, "META_FILE", "")),
+    )
+
+
+def _health_check_ocr() -> dict:
+    from ..modules.ocr import get_ocr_status
+
+    ocr = get_ocr_status()
+    return _health_result(
+        "ok" if ocr.get("available") else "degraded",
+        available=bool(ocr.get("available")),
+        engine=str(ocr.get("engine") or "none"),
+        message=str(ocr.get("message") or ""),
+    )
+
+
+def _health_check_models() -> dict:
+    models = list_models()
+    available = [name for name in models if is_model_available(name)]
+    profiles = get_model_profiles()
+    return _health_result(
+        "ok" if available else "degraded",
+        active_profile=get_active_model_profile_key(),
+        configured_models_count=len(models),
+        available_models_count=len(available),
+        configured_profiles_count=len(profiles),
+        local_models_count=len(LOCAL_MODELS),
+        cloud_models_count=len(CLOUD_MODELS),
+        available_models=available,
+    )
+
+
+def _runtime_diagnostic_checks() -> dict:
+    return {
+        "database": _safe_health_check(_health_check_database),
+        "cache": _safe_health_check(_health_check_cache),
+        "faiss": _safe_health_check(_health_check_faiss),
+        "ocr": _safe_health_check(_health_check_ocr),
+        "models": _safe_health_check(_health_check_models),
+    }
 
 
 def _consume_quota_or_raise(user: dict, action: str) -> None:
@@ -183,29 +260,8 @@ def _log_progress_activity_safe(
         pass
 
 
-@router.get("/health/runtime")
-def runtime_health():
-    """
-    Lightweight runtime status endpoint used by frontend diagnostics.
-    Kept unauthenticated so clients can detect backend reachability issues.
-    """
-    raw_mode = str(os.getenv("KB_REINDEX_MODE", "skip") or "skip").strip().lower()
-    if str(os.getenv("SKIP_KB_REINDEX", "")).strip().lower() in {"1", "true", "yes", "on"}:
-        raw_mode = "skip"
-    if raw_mode in {"true", "1", "yes", "on", "changed"}:
-        raw_mode = "incremental"
-    elif raw_mode not in {"incremental", "full", "skip"}:
-        raw_mode = "skip"
-
-    return envelope(
-        {
-            "status": "ok",
-            "api": "up",
-            "ws": "configured",
-            "kb_reindex_mode": raw_mode,
-        },
-        message_id="MSG-1000",
-    )
+# The health, ask, and admin endpoints have been migrated into dedicated router modules.
+# Remaining route definitions continue below.
 
 
 def _get_user_row_by_email(email: str):
@@ -219,676 +275,26 @@ def _resolve_student_user_id(student_identifier: str) -> Optional[str]:
 def _has_relationship_access(student_user_id: str, requester: dict) -> bool:
     return services.relationships.has_relationship_access(student_user_id, requester)
 
-@router.post("/ask")
-def ask(request: AskRequest, user=Depends(get_current_user)):
-    """
-    Protected Ask API
-    - Requires JWT token
-    - Supports session_id (optional)
-    - Supports model selection via 'model_name' (optional)
-    - Uses Redis cache for faster responses
-    """
 
-    query = request.query
-    session_id = request.session_id
-    model_name = request.model_name  # Optional model selection
+# ✅ MOVED TO auth_session.py router
+# - POST /login
+# - GET /auth/session
+# - POST /logout
+# - POST /register
 
-    if not session_id:
-        session_id = str(uuid.uuid4())
 
-    routed_task = route_task(
-        query=query,
-        route="/ask",
-        requested_task=request.task,
-        model_name=model_name,
-        content_id=request.content_id,
-    )
+# ✅ MOVED TO auth_session.py router
+# - GET /profile
+# - PUT /profile
+# - POST /reset-password
 
-    _consume_quota_or_raise(user, "ask")
 
-    try:
-        use_generator_executor = bool(request.task) or bool(routed_task.explicit) or routed_task.model_task == "summary"
-        if is_utility_task(routed_task.model_task):
-            ans = execute_utility_task(
-                task=routed_task.model_task,
-                query=query,
-                user_id=user["username"],
-                session_id=session_id,
-                model_name=model_name,
-                content_id=request.content_id,
-            )
-        elif is_generator_task(routed_task.model_task) and use_generator_executor:
-            ans = execute_generator_task(
-                task=routed_task.model_task,
-                query=query,
-                user_id=user["username"],
-                session_id=session_id,
-                model_name=model_name,
-                content_id=request.content_id,
-            )
-        else:
-            generate_kwargs = {
-                "query": query,
-                "user_id": user["username"],
-                "session_id": session_id,
-                "model_name": model_name,
-                "session_content_override": request.content_id,
-                "bypass_cache": request.bypass_cache,
-            }
-            if routed_task.model_task != "qa":
-                generate_kwargs["task"] = routed_task.model_task
-
-            ans = generate_answer(**generate_kwargs)
-    except Exception:
-        release_usage(user["username"], "ask")
-        raise
-
-    return envelope({
-        "answer": ans,
-        "session_id": session_id,
-        "model_used": model_name if model_name else "default"
-    }, message_id="MSG-1000")
-
-
-def _start_admin_reindex_job(
-    payload: Optional[dict],
-    *,
-    force_reindex: bool,
-    requested_type: str,
-):
-    from ..modules.kb_sync import start_reindex_job
-
-    payload = payload or {}
-    target_path = None
-    if isinstance(payload, dict):
-        target_path = payload.get("path") or payload.get("relative_path") or payload.get("content_id")
-
-    result = start_reindex_job(
-        force_reindex=force_reindex,
-        target_path=target_path,
-        requested_type=requested_type,
-    )
-    response = {
-        "status": result.get("status") or "started",
-        "type": result.get("type") or requested_type,
-        "job_id": result.get("job_id"),
-    }
-    if isinstance(result.get("reindex"), dict):
-        response["reindex"] = result["reindex"]
-    return envelope(response, message_id="MSG-1000")
-
-
-@router.post("/admin/reindex")
-def reindex(payload: Optional[dict] = Body(default=None), user=Depends(require_role("admin"))):
-    payload = payload or {}
-    requested_type = "file" if isinstance(payload, dict) and (payload.get("path") or payload.get("relative_path") or payload.get("content_id")) else "full"
-    return _start_admin_reindex_job(payload, force_reindex=requested_type == "full", requested_type=requested_type)
-
-
-@router.post("/admin/reindex/full")
-def reindex_full(payload: Optional[dict] = Body(default=None), user=Depends(require_role("admin"))):
-    return _start_admin_reindex_job(payload, force_reindex=True, requested_type="full")
-
-
-@router.post("/admin/reindex-incremental")
-def incremental_reindex(payload: Optional[dict] = Body(default=None), user=Depends(require_role("admin"))):
-    return _start_admin_reindex_job(payload, force_reindex=False, requested_type="incremental")
-
-
-@router.post("/admin/reindex/incremental")
-def incremental_reindex_v2(payload: Optional[dict] = Body(default=None), user=Depends(require_role("admin"))):
-    return _start_admin_reindex_job(payload, force_reindex=False, requested_type="incremental")
-
-
-@router.post("/admin/reindex/file")
-def file_reindex(payload: Optional[dict] = Body(default=None), user=Depends(require_role("admin"))):
-    payload = payload or {}
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="A file path/content reference is required for file reindex.")
-
-    file_id = payload.get("file_id")
-    if file_id is not None:
-        result = services.knowledge.queue_reindex(user, scope="file", file_id=int(file_id))
-        return envelope(
-            {
-                "status": "started",
-                "type": "file",
-                "job_id": result.get("job_id"),
-                "queued_files": result.get("queued_files", 0),
-            },
-            message_id="MSG-1000",
-        )
-
-    if not (payload.get("path") or payload.get("relative_path") or payload.get("content_id")):
-        raise HTTPException(status_code=400, detail="A file path/content reference is required for file reindex.")
-    return _start_admin_reindex_job(payload, force_reindex=False, requested_type="file")
-
-
-@router.get("/admin/reindex-status")
-def admin_reindex_status(user=Depends(require_role("admin"))):
-    from ..modules.kb_sync import get_reindex_progress
-
-    progress = get_reindex_progress()
-    response = {
-        "status": progress.get("status") or "idle",
-        "type": progress.get("type") or progress.get("mode") or "idle",
-        "job_id": progress.get("job_id"),
-        "reindex": progress,
-    }
-    return envelope(response, message_id="MSG-1000")
-
-
-@router.get("/admin/reindex/status/{job_id}")
-def admin_reindex_status_by_job(job_id: str, user=Depends(require_role("admin"))):
-    from ..modules.kb_sync import get_reindex_progress
-
-    progress = get_reindex_progress(job_id)
-    response = {
-        "status": progress.get("status") or "idle",
-        "type": progress.get("type") or progress.get("mode") or "unknown",
-        "job_id": progress.get("job_id") or job_id,
-        "reindex": progress,
-    }
-    return envelope(response, message_id="MSG-1000")
-
-
-@router.get("/history")
-def fetch_history(session_id: str, user=Depends(get_current_user)):
-    """Return history; new sessions are valid and return an empty list."""
-    _assert_session_owner_if_exists(session_id, user["username"])
-    return envelope({"history": get_history(user["username"], session_id)}, message_id="MSG-1000")
-
-
-@router.post("/login")
-def login(request: LoginRequest, response: Response):
-    """
-    ✅ NOW WITH PYDANTIC VALIDATION
-    Validates username and password fields
-    """
-    try:
-        payload = services.identity.login(request.email, request.password, response)
-    except PermissionError as exc:
-        raise HTTPException(status_code=401, detail=str(exc))
-    return envelope(payload, message_id="MSG-1000")
-
-
-@router.get("/auth/session")
-def get_auth_session(user=Depends(get_current_user)):
-    """Return canonical authenticated user identity for cookie/bootstrap flows."""
-    return envelope(services.identity.get_auth_session(user), message_id="MSG-1000")
-
-
-@router.post("/logout")
-def logout(response: Response):
-    return envelope(services.identity.logout(response), message_id="MSG-1000")
-
-
-@router.post("/register")
-def register(request: RegisterRequest):
-    """
-    Register a new user account.
-    Email is the unique user ID.
-    """
-    try:
-        result = services.identity.register(
-            first_name=request.first_name,
-            last_name=request.last_name,
-            email=request.email,
-            dob=request.dob,
-            password=request.password,
-            role=request.role,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
-
-    return envelope(result, message_id="MSG-1000")
-
-
-@router.post("/relationships/link-student")
-def link_student(request: LinkStudentRequest, user=Depends(get_current_user)):
-    requester_role = user.get("role", "student")
-    if requester_role not in {"teacher", "parent"}:
-        raise HTTPException(status_code=403, detail="Only teacher or parent accounts can link students")
-
-    student = _get_user_row_by_email(request.student_email)
-    if not student:
-        raise HTTPException(status_code=404, detail="Student account not found")
-    if student["role"] != "student":
-        raise HTTPException(status_code=400, detail="Target user must have student role")
-
-    services.relationships.link_student(
-        student_user_id=student["username"],
-        related_user_id=user["username"],
-        relation_role=requester_role,
-        relation_label=request.relation_label,
-    )
-
-    return envelope(
-        {
-            "status": "linked",
-            "student_username": student["username"],
-            "student_email": student["email"],
-            "relation_role": requester_role,
-            "relation_label": request.relation_label,
-        },
-        message_id="MSG-1000",
-    )
-
-
-@router.get("/relationships/my-students")
-def my_students(user=Depends(get_current_user)):
-    requester_role = user.get("role", "student")
-    if requester_role not in {"teacher", "parent"}:
-        raise HTTPException(status_code=403, detail="Only teacher or parent accounts can list linked students")
-
-    students = services.relationships.list_students_for_related(user["username"], requester_role)
-    return envelope({"students": students}, message_id="MSG-1000")
-
-
-@router.get("/relationships/my-mentors")
-def my_mentors(user=Depends(get_current_user)):
-    if user.get("role") != "student":
-        raise HTTPException(status_code=403, detail="Only student accounts can list mentors")
-
-    mentors = services.relationships.list_mentors_for_student(user["username"])
-    return envelope({"mentors": mentors}, message_id="MSG-1000")
-
-
-@router.post("/notes/save")
-def save_summary_note(request: NoteSaveRequest, user=Depends(get_current_user)):
-    note = save_user_note(
-        user["username"],
-        title=request.title,
-        content=request.content,
-        session_id=request.session_id,
-        source_query=request.source_query,
-        selected_content=request.selected_content,
-        is_pinned=request.is_pinned,
-    )
-    return envelope({"status": "saved", "note": note}, message_id="MSG-1000")
-
-
-@router.get("/notes")
-def list_summary_notes(user=Depends(get_current_user)):
-    return envelope({"notes": list_user_notes(user["username"])}, message_id="MSG-1000")
-
-
-@router.get("/notes/{note_id}")
-def get_summary_note(note_id: int, user=Depends(get_current_user)):
-    note = get_user_note(user["username"], note_id)
-    if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
-    return envelope({"note": note}, message_id="MSG-1000")
-
-
-@router.put("/notes/{note_id}")
-def update_summary_note(note_id: int, request: NoteUpdateRequest, user=Depends(get_current_user)):
-    note = update_user_note(
-        user["username"],
-        note_id,
-        title=request.title,
-        content=request.content,
-        source_query=request.source_query,
-        selected_content=request.selected_content,
-        is_pinned=request.is_pinned,
-    )
-    if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
-    return envelope({"status": "updated", "note": note}, message_id="MSG-1000")
-
-
-@router.delete("/notes/{note_id}")
-def delete_summary_note(note_id: int, user=Depends(get_current_user)):
-    deleted = delete_user_note(user["username"], note_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Note not found")
-    return envelope({"status": "deleted", "note_id": note_id}, message_id="MSG-1000")
-
-
-@router.get("/students/{student_username}/progress")
-def get_student_progress(student_username: str, user=Depends(get_current_user)):
-    student_user_id = _resolve_student_user_id(student_username)
-    if not student_user_id:
-        raise HTTPException(status_code=404, detail="Student not found")
-    if not _has_relationship_access(student_user_id, user):
-        raise HTTPException(status_code=403, detail="Access denied for this student")
-    dashboard, mastery = services.progress.get_student_progress(student_user_id)
-    insights = services.progress.get_insights(student_user_id)
-    study_plan = services.progress.get_study_plan(student_user_id)
-    return envelope(
-        {
-            "student_username": student_user_id,
-            "dashboard": dashboard,
-            "mastery": mastery,
-            "insights": insights,
-            "study_plan": study_plan,
-        },
-        message_id="MSG-1000",
-    )
-
-
-@router.post("/collaboration/notes")
-def add_collaboration_note(request: CollaborationNoteRequest, user=Depends(get_current_user)):
-    role = user.get("role", "student")
-    student_user_id = _resolve_student_user_id(request.student_username)
-    if not student_user_id:
-        raise HTTPException(status_code=404, detail="Student not found")
-    if role not in {"teacher", "parent", "admin"}:
-        raise HTTPException(status_code=403, detail="Only teacher, parent, or admin can add notes")
-    if role != "admin" and not _has_relationship_access(student_user_id, user):
-        raise HTTPException(status_code=403, detail="Access denied for this student")
-
-    note_id = services.relationships.create_note(
-        student_user_id=student_user_id,
-        author_user_id=user["username"],
-        author_role=role,
-        note_text=request.note_text.strip(),
-        visibility=request.visibility,
-    )
-
-    return envelope(
-        {
-            "status": "created",
-            "note_id": note_id,
-            "student_username": student_user_id,
-            "visibility": request.visibility,
-        },
-        message_id="MSG-1000",
-    )
-
-
-@router.get("/students/{student_username}/notes")
-def get_collaboration_notes(student_username: str, user=Depends(get_current_user)):
-    role = user.get("role", "student")
-    student_user_id = _resolve_student_user_id(student_username)
-    if not student_user_id:
-        raise HTTPException(status_code=404, detail="Student not found")
-    if not _has_relationship_access(student_user_id, user):
-        raise HTTPException(status_code=403, detail="Access denied for this student")
-
-    notes = services.relationships.list_notes(student_user_id, role, user["username"])
-    return envelope({"student_username": student_user_id, "notes": notes}, message_id="MSG-1000")
-
-
-@router.put("/students/{student_username}/notes/{note_id}")
-def update_collaboration_note(
-    student_username: str,
-    note_id: int,
-    request: CollaborationNoteUpdateRequest,
-    user=Depends(get_current_user),
-):
-    role = user.get("role", "student")
-    student_user_id = _resolve_student_user_id(student_username)
-    if not student_user_id:
-        raise HTTPException(status_code=404, detail="Student not found")
-    if role not in {"teacher", "parent", "admin"}:
-        raise HTTPException(status_code=403, detail="Only teacher, parent, or admin can update notes")
-    if role != "admin" and not _has_relationship_access(student_user_id, user):
-        raise HTTPException(status_code=403, detail="Access denied for this student")
-
-    updated = services.relationships.update_note(
-        student_user_id=student_user_id,
-        note_id=note_id,
-        updates=request.model_dump(exclude_none=True),
-        requester_user_id=user["username"],
-        requester_role=role,
-    )
-    if not updated:
-        raise HTTPException(status_code=404, detail="Note not found")
-
-    return envelope(updated, message_id="MSG-1000")
-
-
-@router.delete("/students/{student_username}/notes/{note_id}")
-def delete_collaboration_note(student_username: str, note_id: int, user=Depends(get_current_user)):
-    role = user.get("role", "student")
-    student_user_id = _resolve_student_user_id(student_username)
-    if not student_user_id:
-        raise HTTPException(status_code=404, detail="Student not found")
-    if role not in {"teacher", "parent", "admin"}:
-        raise HTTPException(status_code=403, detail="Only teacher, parent, or admin can delete notes")
-    if role != "admin" and not _has_relationship_access(student_user_id, user):
-        raise HTTPException(status_code=403, detail="Access denied for this student")
-
-    deleted = services.relationships.delete_note(
-        student_user_id=student_user_id,
-        note_id=note_id,
-        requester_user_id=user["username"],
-        requester_role=role,
-    )
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Note not found")
-
-    return envelope(
-        {
-            "status": "deleted",
-            "note_id": note_id,
-            "student_username": student_user_id,
-        },
-        message_id="MSG-1000",
-    )
-
-
-@router.post("/students/{student_username}/assignments")
-def create_student_assignment(student_username: str, request: MentorAssignmentRequest, user=Depends(get_current_user)):
-    role = user.get("role", "student")
-    student_user_id = _resolve_student_user_id(student_username)
-    if not student_user_id:
-        raise HTTPException(status_code=404, detail="Student not found")
-    if role not in {"teacher", "parent", "admin"}:
-        raise HTTPException(status_code=403, detail="Only teacher, parent, or admin can assign tasks")
-    if role != "admin" and not _has_relationship_access(student_user_id, user):
-        raise HTTPException(status_code=403, detail="Access denied for this student")
-
-    assignment_id = services.relationships.create_assignment(
-        student_user_id=student_user_id,
-        author_user_id=user["username"],
-        author_role=role,
-        title=request.title.strip(),
-        description=request.description.strip(),
-        action_tab=request.action_tab,
-        cta_label=(request.cta_label or "Open Assignment").strip(),
-        chapter_hint=(request.chapter_hint or "").strip() or None,
-        context_hint=(request.context_hint or request.description).strip(),
-        due_label=(request.due_label or "").strip() or None,
-    )
-
-    return envelope(
-        {
-            "status": "created",
-            "assignment_id": assignment_id,
-            "student_username": student_user_id,
-        },
-        message_id="MSG-1000",
-    )
-
-
-@router.get("/students/{student_username}/assignments")
-def get_student_assignments(student_username: str, user=Depends(get_current_user)):
-    student_user_id = _resolve_student_user_id(student_username)
-    if not student_user_id:
-        raise HTTPException(status_code=404, detail="Student not found")
-    if not _has_relationship_access(student_user_id, user):
-        raise HTTPException(status_code=403, detail="Access denied for this student")
-
-    assignments = services.relationships.list_assignments(student_user_id)
-    return envelope({"student_username": student_user_id, "assignments": assignments}, message_id="MSG-1000")
-
-
-@router.put("/students/{student_username}/assignments/{assignment_id}")
-def update_student_assignment(
-    student_username: str,
-    assignment_id: int,
-    request: MentorAssignmentUpdateRequest,
-    user=Depends(get_current_user),
-):
-    role = user.get("role", "student")
-    student_user_id = _resolve_student_user_id(student_username)
-    if not student_user_id:
-        raise HTTPException(status_code=404, detail="Student not found")
-    if not _has_relationship_access(student_user_id, user):
-        raise HTTPException(status_code=403, detail="Access denied for this student")
-
-    updates = request.model_dump(exclude_unset=True)
-    if role == "student":
-        if set(updates.keys()) - {"status"}:
-            raise HTTPException(status_code=403, detail="Students can only update assignment status")
-    elif role not in {"teacher", "parent", "admin"}:
-        raise HTTPException(status_code=403, detail="Only teacher, parent, or admin can update assignments")
-
-    for field in ("title", "description", "chapter_hint", "context_hint"):
-        if field in updates and isinstance(updates[field], str):
-            updates[field] = updates[field].strip()
-    if "cta_label" in updates and isinstance(updates["cta_label"], str):
-        updates["cta_label"] = updates["cta_label"].strip() or "Open Assignment"
-    if "due_label" in updates and isinstance(updates["due_label"], str):
-        updates["due_label"] = updates["due_label"].strip() or None
-
-    updated = services.relationships.update_assignment(student_user_id, assignment_id, updates)
-    if not updated:
-        raise HTTPException(status_code=404, detail="Assignment not found")
-
-    if role == "student" and updated.get("status") == "completed":
-        _log_progress_activity_safe(
-            user,
-            updated.get("action_tab") or "other",
-            subject=updated.get("chapter_hint") or updated.get("title") or "Assignment",
-            chapter=updated.get("chapter_hint") or updated.get("title") or "Assignment",
-            duration_seconds=300,
-        )
-
-    return envelope(updated, message_id="MSG-1000")
-
-
-@router.delete("/students/{student_username}/assignments/{assignment_id}")
-def delete_student_assignment(student_username: str, assignment_id: int, user=Depends(get_current_user)):
-    role = user.get("role", "student")
-    if role not in {"teacher", "parent", "admin"}:
-        raise HTTPException(status_code=403, detail="Only teacher, parent, or admin can delete assignments")
-
-    student_user_id = _resolve_student_user_id(student_username)
-    if not student_user_id:
-        raise HTTPException(status_code=404, detail="Student not found")
-    if role != "admin" and not _has_relationship_access(student_user_id, user):
-        raise HTTPException(status_code=403, detail="Access denied for this student")
-
-    deleted = services.relationships.delete_assignment(student_user_id, assignment_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Assignment not found")
-
-    return envelope(
-        {"status": "deleted", "assignment_id": assignment_id, "student_username": student_user_id},
-        message_id="MSG-1000",
-    )
-
-
-@router.get("/profile")
-def get_profile(user=Depends(get_current_user)):
-    """Return the editable profile details for the current user."""
-    conn = get_connection()
-    try:
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT username, email, role, first_name, last_name, dob
-            FROM users
-            WHERE username = ?
-            LIMIT 1
-            """,
-            (user["username"],),
-        )
-        row = cursor.fetchone()
-    finally:
-        conn.close()
-
-    if not row:
-        raise HTTPException(status_code=404, detail="Profile not found")
-
-    return envelope(
-        {
-            "profile": {
-                "username": row[0],
-                "email": row[1],
-                "role": row[2],
-                "first_name": row[3],
-                "last_name": row[4],
-                "dob": row[5],
-            }
-        },
-        message_id="MSG-1000",
-    )
-
-
-@router.put("/profile")
-def update_profile(request: ProfileUpdateRequest, user=Depends(get_current_user)):
-    """Update mutable profile fields while keeping email immutable."""
-    try:
-        updated = services.identity.update_profile(
-            username=user["username"],
-            first_name=request.first_name,
-            last_name=request.last_name,
-            dob=request.dob,
-            email=request.email,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    return envelope({"profile": updated, "status": "updated"}, message_id="MSG-1000")
-
-
-@router.post("/reset-password")
-def reset_password(request: ResetPasswordRequest):
-    """
-    Reset password using email + DOB match.
-    """
-    ok = services.identity.reset_password(
-        email=request.email,
-        dob=request.dob,
-        new_password=request.new_password,
-    )
-
-    if not ok:
-        raise HTTPException(status_code=400, detail="Invalid email or DOB")
-
-    return envelope({"status": "password_reset"}, message_id="MSG-1000")
-
-
-@router.get("/sessions")
-def get_sessions(user=Depends(get_current_user)):
-    """Return sessions with persisted titles."""
-    return envelope({"sessions": services.learning.list_chat_sessions(user["username"])}, message_id="MSG-1000")
-
-
-@router.delete("/sessions/{session_id}")
-def delete_session(session_id: str, user=Depends(validate_session_ownership)):
-    """✅ NOW WITH SESSION OWNERSHIP VALIDATION"""
-    return envelope(services.learning.delete_chat_session(user["username"], session_id), message_id="MSG-1000")
-
-
-@router.put("/sessions/{session_id}")
-def rename_session(session_id: str, request: RenameSessionRequest, user=Depends(validate_session_ownership)):
-    """
-    ✅ NOW WITH SESSION OWNERSHIP VALIDATION
-    Persistently rename a session
-    """
-    return envelope(services.learning.rename_chat_session(user["username"], session_id, request.title), message_id="MSG-1000")
-
-
-@router.get("/sessions/{session_id}/content")
-def get_session_content(session_id: str, user=Depends(get_current_user)):
-    """Return session content; new sessions are valid and return null content."""
-    _assert_session_owner_if_exists(session_id, user["username"])
-    return envelope(services.learning.get_session_content(user, session_id), message_id="MSG-1000")
-
-
-@router.put("/sessions/{session_id}/content")
-def set_session_content(session_id: str, request: SetSessionContentRequest, user=Depends(get_current_user)):
-    """
-    Update session content path (PDF etc.).
-    For new sessions with no history rows yet, return success without 404.
-    """
-    _assert_session_owner_if_exists(session_id, user["username"])
-    return envelope(services.learning.set_session_content(user, session_id, request.content_id), message_id="MSG-1000")
+# ✅ MOVED TO auth_session.py router
+# - GET /sessions
+# - DELETE /sessions/{session_id}
+# - PUT /sessions/{session_id}
+# - GET /sessions/{session_id}/content
+# - PUT /sessions/{session_id}/content
 
 
 @router.get("/context")
@@ -979,184 +385,7 @@ def set_learning_context(request: ContextSelectionRequest, user=Depends(get_curr
     )
 
 
-@router.post("/files/upload")
-async def upload_file(
-    class_name: str = Form(...),
-    subject_name: str = Form(...),
-    folder_name: str = Form(...),
-    display_name: str = Form(...),
-    upload: UploadFile = File(...),
-    user=Depends(get_current_user),
-):
-    _consume_quota_or_raise(user, "upload")
-    try:
-        result = upload_pdf(
-            user=user,
-            upload=upload,
-            class_name=class_name,
-            subject_name=subject_name,
-            folder_name=folder_name,
-            display_name=display_name,
-        )
-    except Exception:
-        release_usage(user["username"], "upload")
-        raise
-    return envelope(result, message_id="MSG-1301")
 
-
-@router.get("/files/tree")
-def files_tree(user=Depends(get_current_user)):
-    return envelope({"items": services.knowledge.file_tree(user)}, message_id="MSG-1000")
-
-
-@router.get("/files/index-status")
-def files_index_status(file_id: int | None = None, user=Depends(get_current_user)):
-    return envelope({"items": services.knowledge.index_status(user, file_id=file_id)}, message_id="MSG-1000")
-
-
-@router.post("/files/reindex")
-def files_reindex(scope: str = Form("changed"), file_id: int | None = Form(None), user=Depends(get_current_user)):
-    result = services.knowledge.queue_reindex(user, scope=scope, file_id=file_id)
-    return envelope(result, message_id="MSG-1305")
-
-
-
-
-def _kb_dir() -> str:
-    """Return the absolute path to the knowledge_base directory."""
-    return os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")), "knowledge_base")
-
-
-@router.get("/pdf")
-def serve_pdf(content_id: str | None = None, path: str | None = None, user=Depends(get_current_user)):
-    """
-    Serve PDF from knowledge base folder safely.
-    Returns 403 on access violation (never 200).
-    """
-    reference = unquote(content_id or path or "")
-    if not reference:
-        raise HTTPException(status_code=400, detail="Content reference is required")
-
-    try:
-        resolved = resolve_content_reference(user, reference)
-    except HTTPException as exc:
-        if path and not content_id and exc.status_code == 400:
-            raise HTTPException(status_code=403, detail="Access denied")
-        raise
-
-    full_path = resolved["path"] if resolved else None
-
-    if not full_path or not os.path.isfile(full_path):
-        raise HTTPException(status_code=404, detail="File not found")
-
-    return FileResponse(full_path, media_type="application/pdf")
-
-
-# 🔹 Knowledge Base Endpoints (all require authentication)
-@router.get("/classes")
-def get_classes(user=Depends(get_current_user)):
-    return envelope({"classes": services.knowledge.list_classes()}, message_id="MSG-1000")
-
-
-@router.get("/subjects")
-def get_subjects(class_name: str, user=Depends(get_current_user)):
-    try:
-        subjects = services.knowledge.list_subjects(class_name)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid path component")
-    return envelope({"subjects": subjects}, message_id="MSG-1000")
-
-
-@router.get("/folders")
-def get_folders(class_name: str, subject: str, user=Depends(get_current_user)):
-    try:
-        folders = services.knowledge.list_folders(class_name, subject)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid path component")
-    return envelope({"folders": folders}, message_id="MSG-1000")
-
-
-@router.get("/contents")
-def get_contents(class_name: str, subject: str, folder: str, user=Depends(get_current_user)):
-    try:
-        contents = services.knowledge.list_contents(class_name, subject, folder)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid path component")
-    return envelope({"contents": contents}, message_id="MSG-1000")
-
-@router.post("/lesson-plan/create")
-def create_plan(request: LessonPlanCreateRequest, user=Depends(get_current_user)):
-    """✅ NOW WITH PYDANTIC VALIDATION"""
-    _consume_quota_or_raise(user, "lesson")
-    try:
-        plan = generate_lesson_plan(
-            user["username"],
-            request.session_id,
-            request.chapter,
-            lesson_context=request.lesson_context,
-            selected_content=request.content_id,
-            requested_by=user,
-        )
-    except Exception:
-        release_usage(user["username"], "lesson")
-        raise
-
-    _log_progress_activity_safe(
-        user,
-        "lesson",
-        subject=request.chapter,
-        chapter=request.chapter,
-        duration_seconds=60,
-    )
-    return envelope(plan, message_id="MSG-1000")
-
-
-@router.get("/lesson-plan/sessions")
-def get_lesson_sessions(user=Depends(get_current_user)):
-    """Return saved lesson-plan sessions for the current user."""
-    return envelope({"sessions": services.learning.list_lesson_sessions(user["username"])}, message_id="MSG-1000")
-
-
-@router.put("/lesson-plan/sessions/{session_id}")
-def rename_lesson_plan_session(session_id: str, request: RenameSessionRequest, user=Depends(get_current_user)):
-    """Rename a lesson-plan session for the current user."""
-    result = services.learning.rename_lesson_session(user["username"], session_id, request.title)
-    if result.get("status") == "not_found":
-        raise HTTPException(status_code=404, detail="Lesson session not found")
-    return envelope(result, message_id="MSG-1000")
-
-
-@router.delete("/lesson-plan/sessions/{session_id}")
-def remove_lesson_plan_session(session_id: str, user=Depends(get_current_user)):
-    """Delete a lesson-plan session for the current user."""
-    result = services.learning.delete_lesson_session(user["username"], session_id)
-    return envelope(result, message_id="MSG-1000")
-
-
-@router.get("/lesson-plan")
-def fetch_plan(session_id: str, user=Depends(get_current_user)):
-    """Get lesson plan for a session"""
-    plan = get_lesson_plan(user["username"], session_id)
-    return envelope(plan or {}, message_id="MSG-1000")
-
-
-@router.post("/lesson-plan/progress")
-def update_progress(request: LessonProgressRequest, user=Depends(get_current_user)):
-    """✅ NOW WITH PYDANTIC VALIDATION"""
-    result = update_step_progress(
-        user["username"],
-        request.session_id,
-        request.step_id,
-        request.status
-    )
-    return envelope(result, message_id="MSG-1000")
-
-
-@router.get("/lesson-plan/next")
-def next_step(session_id: str, user=Depends(get_current_user)):
-    """Get next lesson step"""
-    nxt = get_next_step(user["username"], session_id)
-    return envelope({"next_step": nxt}, message_id="MSG-1000")
 
 
 
@@ -1164,201 +393,15 @@ def next_step(session_id: str, user=Depends(get_current_user)):
 # Quiz Endpoints
 # -------------------------
 
-@router.post("/quiz/generate")
-def api_generate_quiz(request: QuizGenerateRequest, user=Depends(get_current_user)):
-    """
-    ✅ NOW WITH PYDANTIC VALIDATION
-    Generate quiz for a chapter
-    """
-    _consume_quota_or_raise(user, "quiz")
-    try:
-        quiz_data = generate_quiz(
-            user["username"],
-            request.session_id,
-            request.chapter,
-            context_hint=request.quiz_context,
-            selected_content=request.content_id,
-            requested_by=user,
-        )
-    except Exception:
-        release_usage(user["username"], "quiz")
-        raise
-
-    _log_progress_activity_safe(
-        user,
-        "quiz",
-        subject=request.chapter,
-        chapter=request.chapter,
-        duration_seconds=60,
-    )
-    return envelope({"quiz_id": quiz_data["quiz_id"], "quiz": quiz_data["questions"]}, message_id="MSG-1000")
-
-
-@router.get("/plan/me")
-def get_my_plan(user=Depends(get_current_user)):
-    return envelope(services.commercial.get_plan_me(user["username"]), message_id="MSG-1000")
-
-
-@router.get("/plan/limits")
-def get_plan_limits(user=Depends(get_current_user)):
-    return envelope(services.commercial.get_plan_limits(user["username"]), message_id="MSG-1000")
-
-
-@router.get("/subscription/catalog")
-def get_subscription_catalog_endpoint(user=Depends(get_current_user)):
-    return envelope(services.commercial.get_subscription_catalog(), message_id="MSG-1000")
-
-
-@router.post("/subscription/quote")
-def get_subscription_quote(request: SubscriptionQuoteRequest, user=Depends(get_current_user)):
-    quote = services.commercial.quote_subscription(
-        class_names=request.class_names,
-        promo_code=request.promo_code,
-        auto_renew=request.auto_renew,
-    )
-    return envelope(quote, message_id="MSG-1000")
-
-
-@router.post("/subscription/activate")
-def activate_subscription_endpoint(request: SubscriptionActivateRequest, user=Depends(get_current_user)):
-    result = services.commercial.activate_subscription(
-        user_id=user["username"],
-        class_names=request.class_names,
-        promo_code=request.promo_code,
-        auto_renew=request.auto_renew,
-        payment_reference=request.payment_reference,
-    )
-    return envelope(result, message_id="MSG-1000")
-
-
-@router.get("/lesson-plan/{lesson_plan_id}/cards")
-def lesson_cards(lesson_plan_id: int, user=Depends(get_current_user)):
-    cards = get_lesson_plan_cards(user["username"], lesson_plan_id)
-    if not cards:
-        raise HTTPException(status_code=404, detail="Lesson cards not found")
-    return envelope({"lesson_plan_id": lesson_plan_id, "cards": cards}, message_id="MSG-1000")
-
-
-@router.post("/lesson-plan/{lesson_plan_id}/cards/{card_id}/complete")
-def complete_card(lesson_plan_id: int, card_id: int, user=Depends(get_current_user)):
-    result = complete_lesson_card(user["username"], lesson_plan_id, card_id, status="completed")
-    if result.get("status") == "not_found":
-        raise HTTPException(status_code=404, detail="Lesson card not found")
-
-    _log_progress_activity_safe(user, "lesson", duration_seconds=300)
-    return envelope(result, message_id="MSG-1000")
-
-
-@router.put("/quiz/sessions/{session_id}")
-def rename_quiz_session_endpoint(session_id: str, request: RenameSessionRequest, user=Depends(get_current_user)):
-    result = services.learning.rename_quiz_session(user["username"], session_id, request.title)
-    if result.get("status") == "not_found":
-        raise HTTPException(status_code=404, detail="Quiz session not found")
-    return envelope(result, message_id="MSG-1000")
-
-
-@router.delete("/quiz/sessions/{session_id}")
-def delete_quiz_session_endpoint(session_id: str, user=Depends(get_current_user)):
-    result = services.learning.delete_quiz_session(user["username"], session_id)
-    return envelope(result, message_id="MSG-1000")
-
-
-@router.post("/cards/{card_id}/quiz/generate")
-def generate_card_quiz_endpoint(
-    card_id: int,
-    request: ArtifactGenerateRequest | None = Body(default=None),
+@router.get("/flashcards/sessions", response_model=SessionListResponse)
+def api_list_flashcard_sessions(
+    limit: Optional[int] = Query(None, ge=1, le=100),
+    offset: Optional[int] = Query(None, ge=0),
     user=Depends(get_current_user),
 ):
-    card = get_card_for_user(user["username"], card_id)
-    if not card:
-        raise HTTPException(status_code=404, detail="Card not found")
-    _consume_quota_or_raise(user, "quiz")
-    try:
-        result = generate_card_quiz(
-            user["username"],
-            card,
-            context_hint=request.context if request else None,
-            selected_content=request.content_id if request else None,
-        )
-    except Exception:
-        release_usage(user["username"], "quiz")
-        raise
-
-    _log_progress_activity_safe(
-        user,
-        "quiz",
-        subject=card.get("title", ""),
-        chapter=card.get("title", ""),
-        duration_seconds=120,
-    )
-    return envelope(result, message_id="MSG-1000")
-
-
-@router.post("/cards/{card_id}/flashcards/generate")
-def generate_card_flashcards_endpoint(
-    card_id: int,
-    request: ArtifactGenerateRequest | None = Body(default=None),
-    user=Depends(get_current_user),
-):
-    card = get_card_for_user(user["username"], card_id)
-    if not card:
-        raise HTTPException(status_code=404, detail="Card not found")
-    _consume_quota_or_raise(user, "flashcard")
-    try:
-        result = generate_card_flashcards(
-            user["username"],
-            card,
-            context_hint=request.context if request else None,
-            selected_content=request.content_id if request else None,
-        )
-    except Exception:
-        release_usage(user["username"], "flashcard")
-        raise
-
-    _log_progress_activity_safe(
-        user,
-        "flashcard",
-        subject=card.get("title", ""),
-        chapter=card.get("title", ""),
-        duration_seconds=120,
-    )
-    return envelope(result, message_id="MSG-1000")
-
-
-@router.get("/artifacts/{artifact_id}")
-def get_artifact_endpoint(artifact_id: int, user=Depends(get_current_user)):
-    artifact = get_artifact(user["username"], artifact_id)
-    if not artifact:
-        raise HTTPException(status_code=404, detail="Artifact not found")
-    return envelope({"artifact": artifact}, message_id="MSG-1000")
-
-
-@router.post("/artifacts/{artifact_id}/save")
-def save_artifact_endpoint(
-    artifact_id: int,
-    title: str | None = Form(None),
-    tags: str | None = Form(None),
-    user=Depends(get_current_user),
-):
-    tag_list = None
-    if tags:
-        tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-    ok = update_artifact_meta(user["username"], artifact_id, title=title, tags=tag_list)
-    if not ok:
-        raise HTTPException(status_code=404, detail="Artifact not found")
-    return envelope({"artifact_id": artifact_id, "status": "saved"}, message_id="MSG-1000")
-
-
-@router.get("/quiz/sessions")
-def api_list_quiz_sessions(user=Depends(get_current_user)):
-    """Return saved quiz sessions for the current user."""
-    return envelope({"sessions": services.learning.list_quiz_sessions(user["username"])}, message_id="MSG-1000")
-
-
-@router.get("/flashcards/sessions")
-def api_list_flashcard_sessions(user=Depends(get_current_user)):
     """Return saved flashcard sessions for the current user."""
-    return envelope({"sessions": services.learning.list_flashcard_sessions(user["username"])}, message_id="MSG-1000")
+    page = services.learning.list_flashcard_sessions(user["username"], limit=limit, offset=offset)
+    return envelope({"sessions": page["items"], "pagination": page["pagination"]}, message_id="MSG-1000")
 
 
 @router.get("/flashcards/latest")
@@ -1383,56 +426,6 @@ def delete_flashcard_session_endpoint(session_id: str, user=Depends(get_current_
     return envelope(result, message_id="MSG-1000")
 
 
-@router.get("/quiz/latest")
-def api_get_latest_quiz(session_id: str, user=Depends(get_current_user)):
-    """Retrieve the latest quiz generated for a session."""
-    quiz = services.learning.get_latest_quiz(user["username"], session_id)
-    if not quiz:
-        raise HTTPException(status_code=404, detail="Quiz not found")
-    return envelope({"quiz_id": quiz["quiz_id"], "quiz": quiz["questions"]}, message_id="MSG-1000")
-
-
-@router.get("/quiz/{quiz_id}")
-def api_get_quiz(quiz_id: str, session_id: str, user=Depends(get_current_user)):
-    """Retrieve a specific quiz"""
-    quiz = get_quiz(user["username"], session_id, quiz_id)
-    if not quiz:
-        raise HTTPException(status_code=404, detail="Quiz not found")
-    return envelope({"quiz_id": quiz["quiz_id"], "quiz": quiz["questions"]}, message_id="MSG-1000")
-
-
-@router.post("/quiz/{quiz_id}/submit")
-def api_submit_quiz(quiz_id: str, request: QuizSubmitRequest, user=Depends(get_current_user)):
-    """Submit answers for a quiz and update mastery scores."""
-    result = submit_quiz_answer(user["username"], request.session_id, quiz_id, request.answers)
-
-    # Update mastery scores based on quiz results
-    if result:
-        correct = sum(1 for v in result.values() if v.get("is_correct"))
-        total = len(result)
-        subject, chapter = _infer_subject_chapter(user["username"], request.session_id)
-        if total > 0:
-            try:
-                new_mastery = services.progress.update_mastery(
-                    user["username"],
-                    subject,
-                    chapter,
-                    correct,
-                    total,
-                )
-                result["_mastery_pct"] = new_mastery
-            except Exception:
-                pass
-
-        _log_progress_activity_safe(
-            user,
-            "quiz",
-            subject=subject,
-            chapter=chapter,
-            duration_seconds=max(60, total * 45),
-        )
-
-    return envelope(result, message_id="MSG-1000")
 
 
 def _infer_subject_chapter(user_id: str, session_id: str) -> tuple[str, str]:
@@ -1454,124 +447,6 @@ def _infer_subject_chapter(user_id: str, session_id: str) -> tuple[str, str]:
     except Exception:
         pass
     return "", ""
-
-
-# ---------------------------------------------------------------------------
-# Assessment: subject quiz + question papers
-# ---------------------------------------------------------------------------
-
-@router.post("/assessment/subject-quiz")
-def api_generate_subject_quiz(request: SubjectQuizRequest, user=Depends(get_current_user)):
-    """Generate a cross-chapter subject-level quiz (practice or exam mode)."""
-    _consume_quota_or_raise(user, "quiz")
-    try:
-        result = generate_subject_quiz(
-            user_id=user["username"],
-            session_id=request.session_id,
-            subject=request.subject,
-            class_name=request.class_name,
-            num_questions=request.num_questions,
-            difficulty=request.difficulty,
-            mode=request.mode,
-        )
-    except Exception:
-        release_usage(user["username"], "quiz")
-        raise
-
-    _log_progress_activity_safe(
-        user,
-        "assessment",
-        subject=request.subject,
-        chapter=request.subject,
-        duration_seconds=120,
-    )
-    return envelope(result, message_id="MSG-1000")
-
-
-@router.post("/assessment/question-paper")
-def api_generate_question_paper(request: QuestionPaperRequest, user=Depends(get_current_user)):
-    """Generate a structured question paper with sections and marks."""
-    _consume_quota_or_raise(user, "quiz")
-    try:
-        result = generate_question_paper(
-            user_id=user["username"],
-            session_id=request.session_id,
-            subject=request.subject,
-            class_name=request.class_name,
-            total_marks=request.total_marks,
-            difficulty=request.difficulty,
-            sections_config=request.sections,
-        )
-    except Exception:
-        release_usage(user["username"], "quiz")
-        raise
-
-    _log_progress_activity_safe(
-        user,
-        "assessment",
-        subject=request.subject,
-        chapter=request.subject,
-        duration_seconds=120,
-    )
-    return envelope(result, message_id="MSG-1000")
-
-
-@router.get("/assessment/papers")
-def api_list_assessment_papers(
-    paper_type: Optional[str] = None,
-    user=Depends(get_current_user),
-):
-    """List all assessment papers for the current user (newest first)."""
-    papers = list_assessment_papers(user["username"], paper_type=paper_type)
-    return envelope({"papers": papers}, message_id="MSG-1000")
-
-
-@router.get("/assessment/papers/{paper_id}")
-def api_get_assessment_paper(paper_id: int, user=Depends(get_current_user)):
-    """Retrieve a specific assessment paper by ID."""
-    paper = get_assessment_paper(user["username"], paper_id)
-    if not paper:
-        raise HTTPException(status_code=404, detail="Assessment paper not found")
-    return envelope({"paper": paper}, message_id="MSG-1000")
-
-
-@router.post("/assessment/papers/{paper_id}/attempt")
-def api_record_assessment_attempt(
-    paper_id: int,
-    request: AssessmentAttemptRequest,
-    user=Depends(get_current_user),
-):
-    """Save a completed assessment attempt for later history review."""
-    result = record_assessment_attempt(
-        user_id=user["username"],
-        paper_id=paper_id,
-        correct_count=request.correct_count,
-        total_questions=request.total_questions,
-        score_pct=request.score_pct,
-    )
-    if not result:
-        raise HTTPException(status_code=404, detail="Assessment paper not found")
-
-    _log_progress_activity_safe(
-        user,
-        "assessment",
-        subject=result.get("subject", ""),
-        chapter=result.get("subject", ""),
-        duration_seconds=max(60, request.total_questions * 30),
-    )
-    return envelope(
-        {
-            "saved": True,
-            "attempt_summary": {
-                "attempt_count": result["attempt_count"],
-                "best_score_pct": result["best_score_pct"],
-                "last_score_pct": result["last_score_pct"],
-                "last_attempted_at": result.get("last_attempted_at"),
-                "recent_scores": result.get("recent_scores") or [],
-            },
-        },
-        message_id="MSG-1000",
-    )
 
 
 # ---------------------------------------------------------------------------

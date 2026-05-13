@@ -120,6 +120,7 @@ class TestSubscriptionCatalog:
         body = resp.json()
         assert body["auto_renew"] is True
         assert body["payment_reference"] == "txn-12345"
+        assert body["activation_mode"] == "manual"
         assert any(item["class_name"] == "Class 8" for item in body["active_classes"])
 
     def test_activate_subscription_reflects_in_plan_me_classes(self, client):
@@ -174,7 +175,7 @@ class TestSubscriptionCatalog:
             "plan": {"plan_code": "free", "limits": {}, "entitlements": [], "classes": []},
             "usage": {"ask_count": 0},
         }
-        with patch("app.api.routes.services") as mock_services:
+        with patch("app.api.subscription.services") as mock_services:
             mock_services.commercial.get_plan_me.return_value = expected
             resp = client.get("/plan/me", headers=headers(token))
 
@@ -187,17 +188,20 @@ class TestSubscriptionCatalog:
     def test_subscription_quote_route_uses_commercial_service_registry(self, client):
         token = login(client)
         expected = {
+            "quote_id": "Q-12345",
+            "amount": 500.0,
+            "currency": "INR",
+            "valid_until": "2099-01-01T00:00:00Z",
             "classes": [{"class_name": "Class 8", "annual_price_cents": 50000, "currency": "INR"}],
             "subtotal_cents": 50000,
             "discount_cents": 0,
             "total_cents": 50000,
-            "currency": "INR",
             "promo": None,
             "billing_period": "annual",
             "auto_renew": True,
         }
         payload = {"class_names": ["Class 8"], "promo_code": None, "auto_renew": True}
-        with patch("app.api.routes.services") as mock_services:
+        with patch("app.api.subscription.services") as mock_services:
             mock_services.commercial.quote_subscription.return_value = expected
             resp = client.post("/subscription/quote", json=payload, headers=headers(token))
 
@@ -215,6 +219,7 @@ class TestSubscriptionCatalog:
             "status": "active",
             "active_classes": [{"class_name": "Class 8", "auto_renew": True}],
             "payment_reference": "txn-abc",
+            "activation_mode": "manual",
         }
         payload = {
             "class_names": ["Class 8"],
@@ -222,7 +227,7 @@ class TestSubscriptionCatalog:
             "auto_renew": True,
             "payment_reference": "txn-abc",
         }
-        with patch("app.api.routes.services") as mock_services:
+        with patch("app.api.subscription.services") as mock_services:
             mock_services.commercial.activate_subscription.return_value = expected
             resp = client.post("/subscription/activate", json=payload, headers=headers(token))
 

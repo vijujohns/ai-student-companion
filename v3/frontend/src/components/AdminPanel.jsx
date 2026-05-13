@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { FiBookOpen, FiEye, FiRefreshCw, FiSettings, FiShield, FiZap } from "react-icons/fi";
 import settings from "../../../configs/settings.json";
-import { apiFetch, parseApiError } from "../services/api";
+import { fetchAdminOverview, fetchAdminModelProfiles, updateAdminModelProfile } from "../services/adminService";
 
 function formatRoleLabel(role = "admin") {
   const normalized = String(role || "admin").trim().toLowerCase();
@@ -54,6 +54,8 @@ export default function AdminPanel({
   const [modelProfileSaving, setModelProfileSaving] = useState(false);
   const [modelProfileStatus, setModelProfileStatus] = useState("");
   const [modelProfileNotice, setModelProfileNotice] = useState("");
+  const [adminOverview, setAdminOverview] = useState(null);
+  const [overviewLoading, setOverviewLoading] = useState(false);
   const [error, setError] = useState("");
 
   const selectedModelProfileDetails = useMemo(
@@ -76,11 +78,7 @@ export default function AdminPanel({
     setModelProfileLoading(true);
     setError("");
     try {
-      const res = await apiFetch("/admin/model-profiles", { method: "GET" });
-      if (!res.ok) {
-        throw new Error(await parseApiError(res, "Unable to load global model profile settings."));
-      }
-      const payload = await res.json();
+      const payload = await fetchAdminModelProfiles();
       const profiles = Array.isArray(payload?.profiles) && payload.profiles.length > 0 ? payload.profiles : FALLBACK_MODEL_PROFILES;
       const activeProfile = payload?.active_profile || profiles[0]?.key || DEFAULT_MODEL_PROFILE;
       setAvailableModelProfiles(profiles);
@@ -100,10 +98,25 @@ export default function AdminPanel({
     }
   }, []);
 
+  const loadAdminOverview = useCallback(async () => {
+    setOverviewLoading(true);
+    setError("");
+    try {
+      const payload = await fetchAdminOverview();
+      setAdminOverview(payload);
+    } catch (_err) {
+      setAdminOverview(null);
+      setError(String(_err?.message || _err));
+    } finally {
+      setOverviewLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!isActive) return;
     loadAdminModelProfiles();
-  }, [isActive, loadAdminModelProfiles]);
+    loadAdminOverview();
+  }, [isActive, loadAdminModelProfiles, loadAdminOverview]);
 
   const handleApplyGlobalModelProfile = async () => {
     if (!selectedModelProfile) return;
@@ -113,15 +126,7 @@ export default function AdminPanel({
     setModelProfileNotice("");
     setError("");
     try {
-      const res = await apiFetch("/admin/model-profiles", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ profile_key: selectedModelProfile }),
-      });
-      if (!res.ok) {
-        throw new Error(await parseApiError(res, "Unable to update the global model profile."));
-      }
-      const payload = await res.json();
+      const payload = await updateAdminModelProfile(selectedModelProfile);
       const profiles = Array.isArray(payload?.profiles) ? payload.profiles : availableModelProfiles;
       const activeProfile = payload?.active_profile || selectedModelProfile;
       setAvailableModelProfiles(profiles);
@@ -251,6 +256,53 @@ export default function AdminPanel({
             </button>
           </div>
           {modelProfileStatus ? <div className="profile-panel__success" role="status"><span>{modelProfileStatus}</span></div> : null}
+        </article>
+
+        <article className="profile-panel__card">
+          <div className="profile-panel__card-top">
+            <strong>Admin Overview</strong>
+            <span className="progress-pill progress-pill--neutral">Operational</span>
+          </div>
+          <p className="sidebar-note">View summary metrics for users, subscriptions, and indexing jobs in one place.</p>
+          {overviewLoading ? (
+            <p className="sidebar-note">Loading admin overview…</p>
+          ) : adminOverview ? (
+            <div className="profile-panel__summary-list">
+              <div>
+                <span>Total users</span>
+                <strong>{adminOverview.total_users ?? 0}</strong>
+              </div>
+              <div>
+                <span>Active subscriptions</span>
+                <strong>{adminOverview.active_subscriptions ?? 0}</strong>
+              </div>
+              <div>
+                <span>Indexing jobs queued</span>
+                <strong>{adminOverview.queued_index_jobs ?? 0}</strong>
+              </div>
+              <div>
+                <span>Indexing jobs running</span>
+                <strong>{adminOverview.running_index_jobs ?? 0}</strong>
+              </div>
+              <div>
+                <span>Indexing jobs failed</span>
+                <strong>{adminOverview.failed_index_jobs ?? 0}</strong>
+              </div>
+            </div>
+          ) : (
+            <p className="sidebar-note">Admin overview is unavailable right now.</p>
+          )}
+          <div className="admin-center-panel__actions">
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={loadAdminOverview}
+              disabled={overviewLoading}
+            >
+              <FiRefreshCw />
+              <span>{overviewLoading ? "Refreshing…" : "Refresh Overview"}</span>
+            </button>
+          </div>
         </article>
 
         <article className="profile-panel__card">

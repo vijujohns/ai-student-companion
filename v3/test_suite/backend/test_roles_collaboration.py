@@ -118,6 +118,31 @@ class TestRelationshipAndCollaboration:
         emails = [item["email"] for item in roster.json()["students"]]
         assert "student@example.com" in emails
 
+    def test_teacher_can_unlink_own_student_relationship(self, client):
+        teacher_email = "teacher_unlink_test@example.com"
+        _register(client, teacher_email, "teacher")
+        teacher_token = _login(client, teacher_email)
+
+        link_response = client.post(
+            "/relationships/link-student",
+            headers=_auth(teacher_token),
+            json={"student_email": "student@example.com", "relation_label": "Temporary Coach"},
+        )
+        assert link_response.status_code == 200
+        assert link_response.json()["linking_mode"] == "direct_existing_student"
+        assert link_response.json()["approval_required"] is False
+
+        unlink_response = client.delete(
+            "/relationships/students/student@example.com",
+            headers=_auth(teacher_token),
+        )
+        assert unlink_response.status_code == 200
+        assert unlink_response.json()["status"] == "unlinked"
+
+        roster = client.get("/relationships/my-students", headers=_auth(teacher_token))
+        assert roster.status_code == 200
+        assert "student@example.com" not in [item["email"] for item in roster.json()["students"]]
+
     def test_student_can_view_my_mentors_after_link(self, client):
         token = _login(client, "student@example.com", "student123")
         response = client.get("/relationships/my-mentors", headers=_auth(token))
@@ -171,6 +196,40 @@ class TestRelationshipAndCollaboration:
         progress = client.get("/students/student@example.com/progress", headers=_auth(teacher_token))
         assert progress.status_code == 200
         assert any(item["id"] == assignment_id for item in progress.json()["dashboard"]["assignments"])
+
+    def test_assignment_collection_supports_pagination(self, client):
+        teacher_email = "teacher_pagination_test@example.com"
+        _register(client, teacher_email, "teacher")
+        teacher_token = _login(client, teacher_email)
+
+        link_response = client.post(
+            "/relationships/link-student",
+            headers=_auth(teacher_token),
+            json={"student_email": "student@example.com", "relation_label": "Pagination Class"},
+        )
+        assert link_response.status_code == 200
+
+        for index in range(3):
+            response = client.post(
+                "/students/student/assignments",
+                headers=_auth(teacher_token),
+                json={
+                    "title": f"Pagination Task {index}",
+                    "description": "Practice pagination-safe assignment loading.",
+                    "action_tab": "lesson",
+                    "cta_label": "Open Lesson",
+                },
+            )
+            assert response.status_code == 200
+
+        page = client.get("/students/student/assignments?limit=2&offset=0", headers=_auth(teacher_token))
+        assert page.status_code == 200
+        body = page.json()
+        assert len(body["assignments"]) == 2
+        assert body["pagination"]["limit"] == 2
+        assert body["pagination"]["offset"] == 0
+        assert body["pagination"]["total"] >= 3
+        assert body["pagination"]["has_more"] is True
 
     def test_assignment_can_be_completed_and_deleted(self, client):
         teacher_token = _login(client, "teacher_link_test@example.com")

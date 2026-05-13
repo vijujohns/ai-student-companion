@@ -11,6 +11,7 @@ function getCallbacks(type) {
     callbacks[type] = {
       onMessage: () => {},
       onClose: () => {},
+      onError: () => {},
     };
   }
   return callbacks[type];
@@ -87,13 +88,14 @@ async function buildRuntimeHint(code) {
  * @param {function} onClose - called when socket closes
  * @param {string} type - 'ask' | 'lesson' | 'quiz'
  */
-export function connectWebSocket(onMessage, onClose = () => {}, type = "ask") {
+export function connectWebSocket(onMessage, onClose = () => {}, onError = () => {}, type = "ask") {
   const token = localStorage.getItem("token");
   const wsBaseUrl = resolveWsBaseUrl();
   const urlBase = `${wsBaseUrl}/ws/${type}`;
   const cb = getCallbacks(type);
   cb.onMessage = onMessage;
   cb.onClose = onClose;
+  cb.onError = onError;
 
   // Close existing socket if any
   if (sockets[type]) {
@@ -127,9 +129,7 @@ export function connectWebSocket(onMessage, onClose = () => {}, type = "ask") {
       if (msg.type === "error") {
         ws.__hasActivity = false;
         console.error(`❌ ${type} Server Error:`, msg.data);
-        if (msg.data) {
-          current.onMessage(`\n\n${msg.data}`);
-        }
+        current.onError(msg.data || `WebSocket error (${type})`);
         current.onMessage("[END]");
       }
     } catch {
@@ -144,12 +144,8 @@ export function connectWebSocket(onMessage, onClose = () => {}, type = "ask") {
     // Browsers may emit onerror when a CONNECTING socket is intentionally closed during teardown.
     if (intentionalClose[type]) return;
     console.error(`❌ ${type} WebSocket Error:`, error);
-    if (!ws.__hasActivity) {
-      return;
-    }
-    current.onMessage(
-      "\n\n⚠️ Connection error while contacting the AI server. Verifying backend health..."
-    );
+    const hint = "⚠️ Connection error while contacting the AI server. Verifying backend health...";
+    current.onError(hint);
     current.onMessage("[END]");
   };
 
@@ -171,7 +167,7 @@ export function connectWebSocket(onMessage, onClose = () => {}, type = "ask") {
       && event.code !== 1005;
     if (shouldShowCloseHint) {
       buildRuntimeHint(event.code).then((hint) => {
-        current.onMessage(`\n\n${hint}`);
+        current.onError(hint);
       });
     }
     current.onClose();
@@ -202,7 +198,7 @@ export function sendMessage(type = "ask", message, onMessage) {
   if (!sockets[type] || sockets[type].readyState === WebSocket.CLOSED) {
     console.warn(`⚠️ ${type} WebSocket not connected, connecting...`);
     const cb = getCallbacks(type);
-    connectWebSocket(cb.onMessage, cb.onClose, type);
+    connectWebSocket(cb.onMessage, cb.onClose, cb.onError, type);
   }
 
   const ws = sockets[type];

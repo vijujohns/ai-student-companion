@@ -102,12 +102,12 @@ def _resolve_upload_record(requested_by: Dict[str, str], file_id: int):
     cursor = conn.cursor()
     if requested_by.get("role") == "admin":
         cursor.execute(
-            "SELECT id, user_id, display_name, relative_path FROM uploaded_files WHERE id=? LIMIT 1",
+            "SELECT * FROM uploaded_files WHERE id=? LIMIT 1",
             (file_id,),
         )
     else:
         cursor.execute(
-            "SELECT id, user_id, display_name, relative_path FROM uploaded_files WHERE id=? AND user_id=? LIMIT 1",
+            "SELECT * FROM uploaded_files WHERE id=? AND user_id=? LIMIT 1",
             (file_id, requested_by.get("username")),
         )
     row = cursor.fetchone()
@@ -463,6 +463,29 @@ def queue_reindex(requested_by: Dict[str, str], scope: str, file_id: Optional[in
     if not files:
         return {"job_id": None, "queued_files": 0}
 
+    conn = get_connection()
+    cursor = conn.cursor()
+    for file_row in files:
+        file_id_value = int(file_row["id"])
+        cursor.execute(
+            """
+            UPDATE file_index_status
+            SET status_reason='queued', message_id='MSG-1302', updated_at=CURRENT_TIMESTAMP
+            WHERE file_id=?
+            """,
+            (file_id_value,),
+        )
+        cursor.execute(
+            """
+            UPDATE uploaded_files
+            SET upload_status='UPLOADED', updated_at=CURRENT_TIMESTAMP
+            WHERE id=?
+            """,
+            (file_id_value,),
+        )
+    conn.commit()
+    conn.close()
+
     scope_ref = str(file_id) if file_id else None
     job_id = _create_index_job(requested_by.get("username"), normalized_scope.upper(), scope_ref)
     _submit_index_job(job_id, files)
@@ -539,6 +562,77 @@ def upload_file(
     """
     extension = _validate_file_upload(upload)
     return _upload_file_internal(user, upload, class_name, subject_name, folder_name, display_name, extension=extension)
+
+
+def rename_uploaded_file(user: Dict[str, str], file_id: int, display_name: str) -> Dict[str, object]:
+    if not _safe_name(display_name):
+        raise HTTPException(status_code=400, detail={"message_id": "MSG-1303", "message": "Use only letters, numbers, and hyphens."})
+
+    row = _resolve_upload_record(user, file_id)
+    old_relative_path = row["relative_path"]
+    old_path = os.path.join(BASE_DIR, old_relative_path)
+    extension = os.path.splitext(row.get("file_name") or old_relative_path)[1] or ".pdf"
+    new_file_name = f"{display_name}{extension}"
+    new_path = os.path.join(os.path.dirname(old_path), new_file_name)
+    new_relative_path = os.path.relpath(new_path, BASE_DIR)
+
+    if os.path.normcase(old_path) != os.path.normcase(new_path):
+        if os.path.exists(new_path):
+            raise HTTPException(status_code=409, detail={"message_id": "MSG-1303", "message": "A file with that name already exists."})
+        if os.path.exists(old_path):
+            os.rename(old_path, new_path)
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE uploaded_files
+        SET display_name=?, file_name=?, relative_path=?, updated_at=CURRENT_TIMESTAMP
+        WHERE id=?
+        """,
+        (display_name, new_file_name, new_relative_path, file_id),
+    )
+    conn.commit()
+    conn.close()
+
+    return {
+        "status": "renamed",
+        "file_id": file_id,
+        "display_name": display_name,
+        "file_name": new_file_name,
+        "relative_path": new_relative_path.replace("\\", "/"),
+        "content_id": make_upload_content_ref(file_id),
+    }
+
+
+def delete_uploaded_file(user: Dict[str, str], file_id: int) -> Dict[str, object]:
+    row = _resolve_upload_record(user, file_id)
+    content_id = make_upload_content_ref(file_id)
+    full_path = os.path.join(BASE_DIR, row["relative_path"])
+    removed_file = False
+    if os.path.exists(full_path):
+        os.remove(full_path)
+        removed_file = True
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM file_index_status WHERE file_id=?", (file_id,))
+    cursor.execute("DELETE FROM uploaded_files WHERE id=?", (file_id,))
+    cursor.execute(
+        "UPDATE chat_history SET selected_content=NULL, session_content=NULL WHERE selected_content=? OR session_content=?",
+        (content_id, content_id),
+    )
+    cursor.execute("UPDATE user_preferences SET content_id=NULL WHERE content_id=?", (content_id,))
+    conn.commit()
+    conn.close()
+
+    return {
+        "status": "deleted",
+        "file_id": file_id,
+        "content_id": content_id,
+        "removed_file": removed_file,
+        "index_cleanup": "metadata_removed",
+    }
 
 
 def _upload_file_internal(
@@ -654,11 +748,30 @@ def get_index_status(user: Dict[str, str], file_id: Optional[int] = None) -> Lis
             "upload_status": r["upload_status"],
             "indexed": bool(r.get("indexed") or False),
             "status_reason": r.get("status_reason"),
+            "processing_state": _derive_processing_state(
+                r["upload_status"], bool(r.get("indexed") or False), r.get("status_reason")
+            ),
             "message_id": r.get("message_id") or "MSG-1302",
             "updated_at": r.get("updated_at"),
         }
         for r in rows
     ]
+
+
+def _derive_processing_state(upload_status: str, indexed: bool, status_reason: str) -> str:
+    normalized_status = str(upload_status or "").strip().upper()
+    normalized_reason = str(status_reason or "").strip().lower()
+
+    if indexed or normalized_status == "INDEXED":
+        return "indexed"
+
+    if normalized_status == "FAILED" or normalized_reason in {"index_failed", "failed"}:
+        return "failed"
+
+    if normalized_reason == "queued" or normalized_status == "UPLOADED":
+        return "queued"
+
+    return "processing"
 
 
 def get_files_tree(user: Dict[str, str]) -> List[Dict[str, object]]:

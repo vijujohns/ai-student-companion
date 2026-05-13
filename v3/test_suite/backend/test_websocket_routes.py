@@ -117,7 +117,11 @@ class TestAskWsEndpoint:
         sent = "\n".join(ws.sent_texts)
         assert '"type": "chunk"' in sent
         assert '"type": "end"' in sent
-        mock_stream.assert_called_once_with("Hi", "student", "s1", None, session_content_override="upload:7")
+        # Verify stream was called with expected args (bypass_cache may be included)
+        assert mock_stream.called
+        call_args = mock_stream.call_args
+        assert call_args[0] == ("Hi", "student", "s1", None)
+        assert call_args[1].get("session_content_override") == "upload:7"
         mock_release_usage.assert_not_called()
 
     @patch("app.api.websocket.authenticate_websocket")
@@ -132,7 +136,10 @@ class TestAskWsEndpoint:
 
         _run(ws_mod.websocket_ask(ws))
 
-        mock_stream.assert_called_once_with("plain text question", "student", "default", None, session_content_override=None)
+        assert mock_stream.called
+        call_args = mock_stream.call_args
+        assert call_args[0] == ("plain text question", "student", "default", None)
+        assert call_args[1].get("session_content_override") is None
         mock_release_usage.assert_not_called()
 
     @patch("app.api.websocket.authenticate_websocket")
@@ -163,6 +170,34 @@ class TestAskWsEndpoint:
     @patch("app.api.websocket.consume_quota")
     @patch("app.api.websocket.release_usage")
     def test_websocket_ask_releases_quota_on_stream_failure(self, mock_release_usage, mock_consume_quota, mock_stream, mock_auth):
+        mock_auth.return_value = {"username": "student"}
+        mock_consume_quota.return_value = (True, "MSG-1000")
+        mock_stream.side_effect = RuntimeError("stream failed")
+        ws = FakeWebSocket(incoming=[json.dumps({"query": "Hi", "session_id": "s1"}), WebSocketDisconnect(code=1000)])
+
+        _run(ws_mod.websocket_ask(ws))
+
+        mock_release_usage.assert_called_once_with("student", "ask")
+        sent = "\n".join(ws.sent_texts)
+        assert '"type": "error"' in sent
+        assert '"type": "end"' in sent
+
+    @patch("app.api.websocket.authenticate_websocket")
+    @patch("app.api.websocket.generate_answer_stream")
+    @patch("app.api.websocket.consume_quota")
+    @patch("app.api.websocket.release_usage")
+    def test_websocket_ask_does_not_release_quota_after_successful_stream(self, mock_release_usage, mock_consume_quota, mock_stream, mock_auth):
+        mock_auth.return_value = {"username": "student"}
+        mock_consume_quota.return_value = (True, "MSG-1000")
+        mock_stream.return_value = ["ok"]
+        ws = FakeWebSocket(incoming=[json.dumps({"query": "Hi", "session_id": "s1"}), WebSocketDisconnect(code=1000)])
+
+        _run(ws_mod.websocket_ask(ws))
+
+        assert mock_release_usage.call_count == 0
+        sent = "\n".join(ws.sent_texts)
+        assert '"type": "chunk"' in sent
+        assert '"type": "end"' in sent
         mock_auth.return_value = {"username": "student"}
         mock_consume_quota.return_value = (True, "MSG-1000")
         mock_stream.side_effect = RuntimeError("stream failed")

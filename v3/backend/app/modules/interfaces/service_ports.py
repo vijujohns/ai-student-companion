@@ -59,6 +59,9 @@ class RelationshipCollaborationPort(Protocol):
     ) -> None:
         ...
 
+    def unlink_student(self, student_user_id: str, related_user_id: str, relation_role: str) -> bool:
+        ...
+
     def list_students_for_related(self, related_user_id: str, relation_role: str) -> List[Dict]:
         ...
 
@@ -75,7 +78,14 @@ class RelationshipCollaborationPort(Protocol):
     ) -> int:
         ...
 
-    def list_notes(self, student_user_id: str, requester_role: str, requester_user_id: str) -> List[Dict]:
+    def list_notes(
+        self,
+        student_user_id: str,
+        requester_role: str,
+        requester_user_id: str,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> Dict:
         ...
 
     def update_note(
@@ -106,7 +116,7 @@ class RelationshipCollaborationPort(Protocol):
     ) -> int:
         ...
 
-    def list_assignments(self, student_user_id: str) -> List[Dict]:
+    def list_assignments(self, student_user_id: str, limit: Optional[int] = None, offset: Optional[int] = None) -> Dict:
         ...
 
     def update_assignment(self, student_user_id: str, assignment_id: int, updates: Dict) -> Optional[Dict]:
@@ -184,6 +194,12 @@ class KnowledgePort(Protocol):
     def queue_reindex(self, user: Dict, scope: str = "changed", file_id: Optional[int] = None) -> Dict:
         ...
 
+    def rename_uploaded_file(self, user: Dict, file_id: int, display_name: str) -> Dict:
+        ...
+
+    def delete_uploaded_file(self, user: Dict, file_id: int) -> Dict:
+        ...
+
 
 class CommercialPort(Protocol):
     def get_plan_me(self, user_id: str) -> Dict:
@@ -215,7 +231,7 @@ class CommercialPort(Protocol):
 
 
 class LearningSessionPort(Protocol):
-    def list_chat_sessions(self, user_id: str) -> List[Dict]:
+    def list_chat_sessions(self, user_id: str, limit: Optional[int] = None, offset: Optional[int] = None) -> Dict:
         ...
 
     def rename_chat_session(self, user_id: str, session_id: str, title: str) -> Dict:
@@ -230,7 +246,7 @@ class LearningSessionPort(Protocol):
     def set_session_content(self, user: Dict, session_id: str, content_id: Optional[str]) -> Dict:
         ...
 
-    def list_lesson_sessions(self, user_id: str) -> List[Dict]:
+    def list_lesson_sessions(self, user_id: str, limit: Optional[int] = None, offset: Optional[int] = None) -> Dict:
         ...
 
     def rename_lesson_session(self, user_id: str, session_id: str, title: str) -> Dict:
@@ -239,7 +255,7 @@ class LearningSessionPort(Protocol):
     def delete_lesson_session(self, user_id: str, session_id: str) -> Dict:
         ...
 
-    def list_quiz_sessions(self, user_id: str) -> List[Dict]:
+    def list_quiz_sessions(self, user_id: str, limit: Optional[int] = None, offset: Optional[int] = None) -> Dict:
         ...
 
     def rename_quiz_session(self, user_id: str, session_id: str, title: str) -> Dict:
@@ -251,7 +267,7 @@ class LearningSessionPort(Protocol):
     def get_latest_quiz(self, user_id: str, session_id: str) -> Optional[Dict]:
         ...
 
-    def list_flashcard_sessions(self, user_id: str) -> List[Dict]:
+    def list_flashcard_sessions(self, user_id: str, limit: Optional[int] = None, offset: Optional[int] = None) -> Dict:
         ...
 
     def rename_flashcard_session(self, user_id: str, session_id: str, title: str) -> Dict:

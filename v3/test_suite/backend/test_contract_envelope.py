@@ -75,6 +75,14 @@ def assert_envelope(body):
     assert "user_text" in message
 
 
+def test_error_envelope_helper_shape():
+    from app.modules.messages import error_envelope
+
+    body = error_envelope("Request failed", message_id="MSG-1400")
+    assert_envelope(body)
+    assert body["error"] == "Request failed"
+
+
 class TestSuccessEnvelope:
     def test_sessions_success_enveloped(self, client):
         token = login(client)

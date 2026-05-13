@@ -44,3 +44,26 @@ def envelope(payload: Optional[Dict[str, Any]] = None, message_id: str = "MSG-10
     if extra:
         body.update(extra)
     return body
+
+
+def error_envelope(
+    error: Any,
+    message_id: str = "MSG-1500",
+    *,
+    user_text: Optional[str] = None,
+    level: Optional[str] = None,
+    **extra: Any,
+) -> Dict[str, Any]:
+    """Return the standard API error response body."""
+    meta = get_message(message_id)
+    body: Dict[str, Any] = {
+        "message": {
+            "message_id": meta["message_id"],
+            "level": level or meta["level"],
+            "user_text": user_text or meta["user_text"],
+        },
+        "error": error,
+    }
+    if extra:
+        body.update(extra)
+    return body

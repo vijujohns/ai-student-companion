@@ -4,6 +4,7 @@ Main FastAPI entry point
 
 import asyncio
 import time
+import uuid
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.exceptions import RequestValidationError
@@ -16,6 +17,7 @@ from dotenv import load_dotenv
 
 from .api.routes import router
 from .api.websocket import websocket_router
+from .api.v1 import create_v1_router
 
 from .modules.faiss_store import load_index
 from .modules.kb_sync import load_knowledge_base, start_reindex_job
@@ -23,7 +25,7 @@ from .modules.file_management import recover_indexing_jobs
 from .modules.db import init_db
 from .core.debug_logger import dlog, is_debug
 from .core.config_loader import get_app_env, get_cors_origins, get_cors_origin_regex
-from .modules.messages import get_message
+from .modules.messages import error_envelope, get_message
 
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
@@ -124,10 +126,12 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         domain = _route_domain(path)
         qp = dict(request.query_params)
         client = request.client.host if request.client else "unknown"
+        request_id = getattr(request.state, "request_id", None)
 
         dlog("API", f"-> {method} {path}",
              domain=domain,
              client=client,
+             request_id=request_id,
              query_params=qp if qp else None)
 
         try:
@@ -136,14 +140,16 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             dlog("API", f"<- {method} {path} {response.status_code}",
                  domain=domain,
                  duration_ms=f"{duration_ms:.1f}ms",
-                 client=client)
+                 client=client,
+                 request_id=request_id)
             return response
         except Exception as exc:
             duration_ms = (time.perf_counter() - start) * 1000
             dlog("API", f"<- {method} {path} EXCEPTION",
                  domain=domain,
                  error=str(exc),
-                 duration_ms=f"{duration_ms:.1f}ms")
+                 duration_ms=f"{duration_ms:.1f}ms",
+                 request_id=request_id)
             raise
 
 
@@ -187,6 +193,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="AI Tutor", lifespan=lifespan)
 
+
+@app.middleware("http")
+async def add_request_id_header(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
 # CORS configuration is centralized in configs/settings.json
 allowed_origins = get_cors_origins()
 allowed_origin_regex = get_cors_origin_regex()
@@ -203,6 +219,7 @@ app.add_middleware(
 )
 
 app.include_router(router)
+app.include_router(create_v1_router())
 app.include_router(websocket_router)
 
 
@@ -229,52 +246,40 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     if isinstance(detail, dict) and detail.get("message_id"):
         message_id = str(detail.get("message_id"))
 
-    meta = get_message(message_id)
-
     if isinstance(detail, dict):
-        user_text = detail.get("message") or detail.get("user_text") or meta["user_text"]
+        fallback = get_message(message_id)
+        user_text = detail.get("message") or detail.get("user_text") or fallback["user_text"]
+        level = detail.get("level")
         error_detail = detail
     elif isinstance(detail, str):
-        user_text = detail or meta["user_text"]
+        fallback = get_message(message_id)
+        user_text = detail or fallback["user_text"]
+        level = None
         error_detail = detail
     else:
-        user_text = meta["user_text"]
+        user_text = None
+        level = None
         error_detail = "Request failed"
 
     return JSONResponse(
         status_code=exc.status_code,
-        content={
-            "message": {
-                "message_id": meta["message_id"],
-                "level": meta["level"],
-                "user_text": user_text,
-            },
-            "error": error_detail,
-        },
+        content=error_envelope(error_detail, message_id=message_id, user_text=user_text, level=level),
     )
 
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    meta = get_message("MSG-1400")
     encoded_errors = jsonable_encoder(exc.errors(), custom_encoder={Exception: lambda e: str(e)})
     return JSONResponse(
         status_code=422,
-        content={
-            "message": meta,
-            "error": encoded_errors,
-        },
+        content=error_envelope(encoded_errors, message_id="MSG-1400"),
     )
 
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
-    meta = get_message("MSG-1500")
     dlog("API", "Unhandled exception", path=request.url.path, error=str(exc))
     return JSONResponse(
         status_code=500,
-        content={
-            "message": meta,
-            "error": "Internal server error",
-        },
+        content=error_envelope("Internal server error", message_id="MSG-1500"),
     )

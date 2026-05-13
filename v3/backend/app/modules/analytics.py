@@ -1136,6 +1136,9 @@ def get_study_plan(user_id: str) -> Dict:
         "total": len(targets),
     }
 
+    # Convert goal_summary to a string for API compatibility
+    goal_summary_text = f"{goal_summary['completed']}/{goal_summary['total']} goals completed"
+
     if schedule and all(step.get("completed") for step in schedule):
         headline = (
             f"You’re on track in {focus_subject} — keep the rhythm going with one more quick check-in."
@@ -1147,7 +1150,7 @@ def get_study_plan(user_id: str) -> Dict:
         "headline": headline,
         "focus_subject": focus_subject,
         "schedule": schedule,
-        "goal_summary": goal_summary,
+        "goal_summary": goal_summary_text,
         "targets": targets,
     }
     _save_study_plan_snapshot(user_id, week_key, snapshot_payload)

@@ -9,6 +9,7 @@ from ..auth import authenticate_user, clear_auth_cookie, create_access_token, se
 from ..db import get_connection
 from ..interfaces.service_ports import CommercialPort, IdentityAccessPort, LearningSessionPort, ProgressPort, RelationshipCollaborationPort, KnowledgePort
 from ..policy import PLAN_LIMITS, get_usage_snapshot, get_user_plan
+from ..pagination import paginate_items
 from ..subscriptions import activate_subscription, get_subscription_catalog, quote_subscription
 from ..user_manager import register_user, reset_password_with_email_dob, update_user_profile
 from ..lesson_plan import list_lesson_sessions, rename_lesson_session, delete_lesson_session
@@ -185,6 +186,26 @@ class DefaultRelationshipCollaborationService(RelationshipCollaborationPort):
         finally:
             conn.close()
 
+    def unlink_student(self, student_user_id: str, related_user_id: str, relation_role: str) -> bool:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                DELETE FROM student_relationships
+                WHERE student_user_id = ?
+                  AND related_user_id = ?
+                  AND relation_role = ?
+                """,
+                (student_user_id, related_user_id, relation_role),
+            )
+            deleted = cursor.rowcount > 0
+            if deleted:
+                conn.commit()
+            return deleted
+        finally:
+            conn.close()
+
     def list_students_for_related(self, related_user_id: str, relation_role: str) -> List[Dict]:
         conn = get_connection()
         try:
@@ -269,7 +290,14 @@ class DefaultRelationshipCollaborationService(RelationshipCollaborationPort):
         finally:
             conn.close()
 
-    def list_notes(self, student_user_id: str, requester_role: str, requester_user_id: str) -> List[Dict]:
+    def list_notes(
+        self,
+        student_user_id: str,
+        requester_role: str,
+        requester_user_id: str,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> Dict:
         conn = get_connection()
         try:
             cursor = conn.cursor()
@@ -306,7 +334,7 @@ class DefaultRelationshipCollaborationService(RelationshipCollaborationPort):
                     (student_user_id, requester_user_id),
                 )
             rows = cursor.fetchall()
-            return [
+            notes = [
                 {
                     "id": row[0],
                     "author_user_id": row[1],
@@ -317,6 +345,7 @@ class DefaultRelationshipCollaborationService(RelationshipCollaborationPort):
                 }
                 for row in rows
             ]
+            return paginate_items(notes, limit=limit, offset=offset)
         finally:
             conn.close()
 
@@ -479,7 +508,7 @@ class DefaultRelationshipCollaborationService(RelationshipCollaborationPort):
         row = cursor.fetchone()
         return self._assignment_row_to_dict(row) if row else None
 
-    def list_assignments(self, student_user_id: str) -> List[Dict]:
+    def list_assignments(self, student_user_id: str, limit: Optional[int] = None, offset: Optional[int] = None) -> Dict:
         conn = get_connection()
         try:
             cursor = conn.cursor()
@@ -493,7 +522,7 @@ class DefaultRelationshipCollaborationService(RelationshipCollaborationPort):
                 (student_user_id,),
             )
             rows = cursor.fetchall()
-            return [self._assignment_row_to_dict(row) for row in rows]
+            return paginate_items([self._assignment_row_to_dict(row) for row in rows], limit=limit, offset=offset)
         finally:
             conn.close()
 
@@ -650,7 +679,11 @@ class DefaultKnowledgeService(KnowledgePort):
             if os.path.isfile(full_path) and f.lower().endswith(".pdf"):
                 relative_path = os.path.relpath(full_path, self._kb_dir)
                 result.append(
-                    {"title": os.path.splitext(f)[0], "content_id": make_kb_content_ref(relative_path)}
+                    {
+                        "title": os.path.splitext(f)[0], 
+                        "content_id": make_kb_content_ref(relative_path),
+                        "path": relative_path
+                    }
                 )
         return result
 
@@ -665,6 +698,14 @@ class DefaultKnowledgeService(KnowledgePort):
     def queue_reindex(self, user: Dict, scope: str = "changed", file_id: Optional[int] = None) -> Dict:
         from ..file_management import queue_reindex as _queue_reindex
         return _queue_reindex(user, scope=scope, file_id=file_id)
+
+    def rename_uploaded_file(self, user: Dict, file_id: int, display_name: str) -> Dict:
+        from ..file_management import rename_uploaded_file
+        return rename_uploaded_file(user, file_id=file_id, display_name=display_name)
+
+    def delete_uploaded_file(self, user: Dict, file_id: int) -> Dict:
+        from ..file_management import delete_uploaded_file
+        return delete_uploaded_file(user, file_id=file_id)
 
 
 class DefaultCommercialService(CommercialPort):
@@ -714,7 +755,7 @@ class DefaultCommercialService(CommercialPort):
 
 
 class DefaultLearningSessionService(LearningSessionPort):
-    def list_chat_sessions(self, user_id: str) -> List[Dict]:
+    def list_chat_sessions(self, user_id: str, limit: Optional[int] = None, offset: Optional[int] = None) -> Dict:
         conn = get_connection()
         cursor = conn.cursor()
         try:
@@ -743,7 +784,7 @@ class DefaultLearningSessionService(LearningSessionPort):
         finally:
             conn.close()
 
-        return [
+        sessions = [
             {
                 "id": r[0],
                 "title": r[1] if r[1] else "New Chat",
@@ -752,6 +793,7 @@ class DefaultLearningSessionService(LearningSessionPort):
             }
             for r in rows
         ]
+        return paginate_items(sessions, limit=limit, offset=offset)
 
     def rename_chat_session(self, user_id: str, session_id: str, title: str) -> Dict:
         conn = get_connection()
@@ -836,8 +878,8 @@ class DefaultLearningSessionService(LearningSessionPort):
             conn.close()
         return {"status": "updated", "session_content": canonical_content_id}
 
-    def list_lesson_sessions(self, user_id: str) -> List[Dict]:
-        return list_lesson_sessions(user_id)
+    def list_lesson_sessions(self, user_id: str, limit: Optional[int] = None, offset: Optional[int] = None) -> Dict:
+        return paginate_items(list_lesson_sessions(user_id), limit=limit, offset=offset)
 
     def rename_lesson_session(self, user_id: str, session_id: str, title: str) -> Dict:
         return rename_lesson_session(user_id, session_id, title)
@@ -845,8 +887,8 @@ class DefaultLearningSessionService(LearningSessionPort):
     def delete_lesson_session(self, user_id: str, session_id: str) -> Dict:
         return delete_lesson_session(user_id, session_id)
 
-    def list_quiz_sessions(self, user_id: str) -> List[Dict]:
-        return list_quiz_sessions(user_id)
+    def list_quiz_sessions(self, user_id: str, limit: Optional[int] = None, offset: Optional[int] = None) -> Dict:
+        return paginate_items(list_quiz_sessions(user_id), limit=limit, offset=offset)
 
     def rename_quiz_session(self, user_id: str, session_id: str, title: str) -> Dict:
         return rename_quiz_session(user_id, session_id, title)
@@ -857,8 +899,8 @@ class DefaultLearningSessionService(LearningSessionPort):
     def get_latest_quiz(self, user_id: str, session_id: str) -> Optional[Dict]:
         return get_latest_quiz_for_session(user_id, session_id)
 
-    def list_flashcard_sessions(self, user_id: str) -> List[Dict]:
-        return list_flashcard_sessions(user_id)
+    def list_flashcard_sessions(self, user_id: str, limit: Optional[int] = None, offset: Optional[int] = None) -> Dict:
+        return paginate_items(list_flashcard_sessions(user_id), limit=limit, offset=offset)
 
     def rename_flashcard_session(self, user_id: str, session_id: str, title: str) -> Dict:
         return rename_flashcard_session(user_id, session_id, title)

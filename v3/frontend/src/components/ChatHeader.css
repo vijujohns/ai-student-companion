@@ -1,0 +1,110 @@
+.chat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  min-height: 4rem;
+}
+
+.header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.session-title {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: #f8fafc;
+  line-height: 1.1;
+}
+
+.session-id {
+  font-size: 0.875rem;
+  color: rgba(248, 250, 252, 0.7);
+  font-weight: 400;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  background-color: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: rgba(248, 250, 252, 0.9);
+}
+
+.status-dot {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  background-color: #dc3545;
+}
+
+.status-indicator.online .status-dot {
+  background-color: #34d399;
+}
+
+.status-text {
+  color: rgba(248, 250, 252, 0.9);
+}
+
+.header-actions {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.header-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.75rem;
+  background-color: rgba(255, 255, 255, 0.05);
+  color: #f8fafc;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.header-button:hover {
+  background-color: rgba(255, 255, 255, 0.12);
+  transform: translateY(-1px);
+}
+
+.header-button:active {
+  background-color: rgba(255, 255, 255, 0.08);
+  transform: translateY(0);
+}
+
+@media (max-width: 620px) {
+  .chat-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+    padding: 1rem;
+  }
+
+  .header-right {
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .session-id {
+    display: none;
+  }
+}

@@ -65,8 +65,11 @@ class TestContractSnapshots:
         assert resp.status_code == 200
         body = resp.json()
         assert_message_meta(body)
-        expected = {"status", "api", "ws", "kb_reindex_mode", "message"}
+        expected = {"status", "api", "ws", "kb_reindex_mode", "diagnostics_status", "checks", "message"}
         assert set(body.keys()) == expected
+        assert set(body["checks"].keys()) == {"database", "cache", "faiss", "ocr", "models"}
+        for check in body["checks"].values():
+            assert "status" in check
 
     def test_login_snapshot_shape(self, client):
         resp = client.post("/login", json={"email": "student@example.com", "password": "student123"})

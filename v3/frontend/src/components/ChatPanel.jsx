@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FiGlobe,
-  FiArrowDown,
   FiBook,
   FiBookOpen,
   FiCheck,
@@ -22,15 +21,13 @@ import {
   FiRefreshCw,
   FiSend,
   FiShield,
-  FiSquare,
   FiTrash2,
   FiBarChart2,
   FiUser,
-  FiVolume2,
-  FiVolumeX,
   FiX,
   FiZap,
 } from "react-icons/fi";
+import { FaArrowDown } from "react-icons/fa";
 import { apiFetch, parseApiError, getEnvelopeMessage, messageSummary } from "../services/api";
 import { sendMessage } from "../services/websocket";
 import { useChatSendMessage } from "../hooks/useChatSendMessage";
@@ -46,6 +43,7 @@ import { useChatComposerLayout } from "../hooks/useChatComposerLayout";
 import { useViewerLayout } from "../hooks/useViewerLayout";
 import { filterSessionsByContext } from "../utils/chatPanelSelectors";
 import { buildKnowledgeBaseStatusMessage, countPendingUploadsInScope } from "../utils/kbSelectors";
+import LearningContextBar from "./LearningContextBar";
 import {
   buildCompletedStreamMessage,
   isWebsocketErrorToken,
@@ -63,6 +61,8 @@ import AssessmentPanel from "./AssessmentPanel";
 import AssignmentsPanel from "./AssignmentsPanel";
 import ProgressPanel from "./ProgressPanel";
 import RoleHubPanel from "./RoleHubPanel";
+import UploadIndexingPanel from "./UploadIndexingPanel";
+import LearningContextModal from "./LearningContextModal";
 import AdminPanel from "./AdminPanel";
 import MessageContent from "./MessageContent";
 import NotesPanel from "./NotesPanel";
@@ -72,6 +72,9 @@ import VoiceControl from "./VoiceControl";
 import LanguagePicker from "./LanguagePicker";
 import ProfilePanel from "./ProfilePanel";
 import BillingPanel from "./BillingPanel";
+import MessageList from "./MessageList";
+import MessageInput from "./MessageInput";
+import ChatHeader from "./ChatHeader";
 import "./style.css";
 
 function formatInrFromCents(cents, currency = "INR") {
@@ -613,10 +616,11 @@ function writeStoredLearningContext(context) {
 }
 
 function buildFriendlyProcessingState(statusItem) {
+  const normalizedState = String(statusItem?.processing_state || "").trim().toLowerCase();
   const normalizedStatus = String(statusItem?.upload_status || "").trim().toUpperCase();
   const normalizedReason = String(statusItem?.status_reason || "").trim().toLowerCase();
 
-  if (statusItem?.indexed || normalizedStatus === "INDEXED") {
+  if (statusItem?.indexed || normalizedState === "indexed" || normalizedStatus === "INDEXED") {
     return {
       progress: 100,
       title: "Your content is ready.",
@@ -626,18 +630,28 @@ function buildFriendlyProcessingState(statusItem) {
     };
   }
 
-  if (normalizedStatus === "FAILED" || normalizedReason.includes("fail")) {
+  if (normalizedState === "failed" || normalizedStatus === "FAILED" || normalizedReason.includes("fail")) {
     return {
       progress: 78,
-      title: "We are fixing your content. It will be ready soon.",
-      detail: "You can continue using the app while we retry in the background.",
+      title: "Indexing failed. We are retrying it in the background.",
+      detail: "You can continue using the app while this content is reprocessed.",
       tone: "warning",
       ready: false,
     };
   }
 
+  if (normalizedState === "queued") {
+    return {
+      progress: 32,
+      title: "Your content is queued for indexing.",
+      detail: "It will be processed soon and then become available in chat and study tools.",
+      tone: "info",
+      ready: false,
+    };
+  }
+
   return {
-    progress: normalizedStatus === "UPLOADED" ? 38 : 64,
+    progress: 64,
     title: "Preparing your content...",
     detail: "This will be ready shortly. You can continue using the app.",
     tone: "info",
@@ -653,6 +667,7 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
   const [isStreaming, setIsStreaming] = useState(false);
   const [wsError, setWsError] = useState("");
   const [sessionId, setSessionId] = useState(localStorage.getItem("session_id") || null);
+  const [sessionTitle, setSessionTitle] = useState("AI Learning Assistant");
   const userId = localStorage.getItem("username") || "student";
   const rawUserRole = localStorage.getItem("role") || "student";
   const userRole = rawUserRole === "user" ? "student" : rawUserRole;
@@ -1090,14 +1105,15 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
   const handleNewChat = () => {
     const newSession = Date.now().toString();
     setSessionId(newSession);
+    setSessionTitle("AI Learning Assistant");
     localStorage.setItem("session_id", newSession);
     setMessages([]);
-    setSelectedContent(null);
   };
 
   const switchSession = (sessionObj) => {
     const session = sessionObj.id;
     setSessionId(session);
+    setSessionTitle(sessionObj.title || "AI Learning Assistant");
     localStorage.setItem("session_id", session);
     loadHistory(session);
     setSelectedContent(sessionObj.selected_content || null);
@@ -1117,6 +1133,7 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
           switchSession(updated[0]);
         } else {
           setSessionId(null);
+          setSessionTitle("AI Learning Assistant");
           localStorage.removeItem("session_id");
           setMessages([]);
           setSelectedContent(null);
@@ -1319,6 +1336,53 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
 
   const refreshIndexedFiles = async () => {
     await loadContents(selectedClass, selectedSubject, selectedFolder);
+  };
+
+  const handleRenameUploadedFile = async (file) => {
+    if (!file?.file_id) return;
+    const nextName = window.prompt("Rename uploaded file", file.title || "");
+    const displayName = String(nextName || "").trim();
+    if (!displayName || displayName === file.title) return;
+
+    try {
+      const res = await apiFetch(`/files/${encodeURIComponent(file.file_id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ display_name: displayName }),
+      });
+      if (!res.ok) {
+        throw new Error(await parseApiError(res, "Unable to rename file."));
+      }
+      await loadContents(selectedClass, selectedSubject, selectedFolder);
+    } catch (err) {
+      setUploadNotice({
+        level: "ERROR",
+        messageId: "MSG-1303",
+        text: String(err?.message || "Unable to rename file."),
+      });
+    }
+  };
+
+  const handleDeleteUploadedFile = async (file) => {
+    if (!file?.file_id) return;
+    if (!window.confirm(`Delete "${file.title || "uploaded file"}"? This removes it from your uploaded documents.`)) return;
+
+    try {
+      const res = await apiFetch(`/files/${encodeURIComponent(file.file_id)}`, { method: "DELETE" });
+      if (!res.ok) {
+        throw new Error(await parseApiError(res, "Unable to delete file."));
+      }
+      if (selectedContent === file.content_id) {
+        setSelectedContent(null);
+      }
+      await loadContents(selectedClass, selectedSubject, selectedFolder);
+    } catch (err) {
+      setUploadNotice({
+        level: "ERROR",
+        messageId: "MSG-1304",
+        text: String(err?.message || "Unable to delete file."),
+      });
+    }
   };
 
   const pendingUploadsInScope = countPendingUploadsInScope(
@@ -1647,7 +1711,11 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
     [armStreamWatchdog, loadSessions]
   );
 
-  useChatWebSocketLifecycle({ handleIncomingToken, clearStreamWatchdog });
+  useChatWebSocketLifecycle({
+    handleIncomingToken,
+    handleError: setWsError,
+    clearStreamWatchdog,
+  });
 
   const [preferredLanguage, setPreferredLanguage] = useState("en");
   const [translatedMessages, setTranslatedMessages] = useState({});
@@ -1935,6 +2003,15 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
       loadHistory(sessionId);
     }
   }, [loadHistory, sessionId]);
+
+  useEffect(() => {
+    if (sessionId && sessions.length > 0) {
+      const currentSession = sessions.find(s => s.id === sessionId);
+      if (currentSession) {
+        setSessionTitle(currentSession.title || "AI Learning Assistant");
+      }
+    }
+  }, [sessionId, sessions]);
 
   const toggleAutoSpeak = useCallback(() => {
     setAutoSpeak((prev) => {
@@ -2488,95 +2565,25 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
         )}
 
         {shouldShowContextBar && (
-          <div className="workspace-context-bar">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".pdf,application/pdf"
-              onChange={handleUploadFile}
-              style={{ display: "none" }}
-            />
-
-            <div className="workspace-context-status" role="status" aria-live="polite">
-              <div className="workspace-context-status-row">
-                <div className="workspace-context-summary" aria-label="Selected learning context">
-                  {isExplorerMode ? (
-                    <span className="status-pill status-pill--accent workspace-context-pill">General learning only</span>
-                  ) : (
-                    <>
-                      {contextPillItems.length > 0 && (
-                        <span className="workspace-context-summary__label">Current Context</span>
-                      )}
-                      {contextPillItems.map(({ key, icon: Icon, label, value }) => (
-                        <span key={key} className="status-pill status-pill--accent workspace-context-pill" title={`${label}: ${value}`}>
-                          <Icon />
-                          <span className="workspace-context-pill__text">{value}</span>
-                        </span>
-                      ))}
-                    </>
-                  )}
-
-                  {(selectedContent || hasViewerContent) && (
-                    <button
-                      type="button"
-                      className="status-pill status-pill--button workspace-context-pill"
-                      onClick={() => setIsViewerVisible((prev) => !prev)}
-                      disabled={!selectedContent}
-                      title={isViewerVisible ? "Hide document" : "Show document"}
-                      aria-label={isViewerVisible ? "Hide document" : "Show document"}
-                    >
-                      {isViewerVisible ? <FiEyeOff /> : <FiEye />}
-                      <span>{isViewerVisible ? "Hide Document" : "Show Document"}</span>
-                    </button>
-                  )}
-                </div>
-
-                <div className="workspace-context-actions workspace-context-actions--selectors-row">
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    onClick={() => openContextModal("Choose your class and subject to personalize the workspace.")}
-                  >
-                    <FiEdit />
-                    <span>Edit Context</span>
-                  </button>
-                </div>
-              </div>
-
-              {contextProcessing ? (
-                <div className="workspace-context-status-text">
-                  <div className={`context-processing context-processing--${contextProcessing.tone || "info"}`}>
-                    <strong>{contextProcessing.title}</strong>
-                    <span>{contextProcessing.detail}</span>
-                    <div className="context-processing__bar" aria-hidden="true">
-                      <span style={{ width: `${Math.max(0, Math.min(100, Number(contextProcessing.progress || 0)))}%` }} />
-                    </div>
-                  </div>
-                </div>
-              ) : uploadNotice ? (
-                <div className="workspace-context-status-text">
-                  <span className={`status-inline status-inline--${String(uploadNotice.level || "INFO").toLowerCase()}`}>
-                    <strong>{uploadNotice.level || "INFO"}</strong>
-                    <span>{uploadNotice.messageId || "MSG-1000"}</span>
-                    <span>{uploadNotice.text}</span>
-                  </span>
-                </div>
-              ) : supplementalContextStatus ? (
-                <div className="workspace-context-status-text">
-                  <span>{supplementalContextStatus}</span>
-                </div>
-              ) : null}
-
-              {uploadLimitState.blocked && (
-                <span className="sidebar-note">
-                  Upload limit reached ({uploadLimitState.used}/{uploadLimitState.limit}). Upgrade plan to continue.
-                </span>
-              )}
-              {!isExplorerMode && !hasRequiredStudyContext && (
-                <span className="sidebar-note">Please select your class and subject to continue</span>
-              )}
-            </div>
-          </div>
+          <LearningContextBar
+            fileInputRef={fileInputRef}
+            handleUploadFile={handleUploadFile}
+            isExplorerMode={isExplorerMode}
+            selectedClass={selectedClass}
+            selectedSubject={selectedSubject}
+            selectedFolder={selectedFolder}
+            selectedContentItem={selectedContentItem}
+            isViewerVisible={isViewerVisible}
+            setIsViewerVisible={setIsViewerVisible}
+            openContextModal={openContextModal}
+            contextProcessing={contextProcessing}
+            uploadNotice={uploadNotice}
+            supplementalContextStatus={supplementalContextStatus}
+            uploadLimitState={uploadLimitState}
+            pendingUploadsInScope={pendingUploadsInScope}
+            hasRequiredStudyContext={hasRequiredStudyContext}
+            hasViewerContent={hasViewerContent}
+          />
         )}
 
         <div
@@ -2592,111 +2599,32 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
         >
           {activeTab === "chat" && (
           <div ref={chatPanelRef} className="workspace-main chat-panel">
-            <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+            <ChatHeader
+              sessionTitle={sessionTitle || "AI Learning Assistant"}
+              sessionId={sessionId}
+              onNewChat={handleNewChat}
+              onExport={() => {/* TODO: implement export */}}
+              isOnline={true} // TODO: implement connection status
+            />
 
-            <div ref={chatMessagesRef} className="workspace-messages chat-messages">
-              {wsError && (
-                <div className="ws-error-banner">
-                  <span>{wsError}</span>
-                  <button
-                    type="button"
-                    className="icon-button icon-button--ghost"
-                    onClick={() => setWsError("")}
-                    aria-label="Dismiss"
-                  >
-                    ×
-                  </button>
-                </div>
-              )}
-              {renderEmptyState()}
-
-              {messages.map((msg, index) => (
-                <div key={index} className={`message-row ${msg.type}`}>
-                  <div className="message-bubble">
-                    {msg.type === "ai" && looksLikeStructuredSummary(msg.text) ? (
-                      <SummaryViewer
-                        content={translatedMessages[index] || msg.text}
-                        sourceQuery={index > 0 && messages[index - 1]?.type === "user" ? messages[index - 1].text : ""}
-                        sessionId={sessionId}
-                        selectedContent={selectedContent}
-                        onOpenNotes={() => handleWorkspaceTabSelect("notes")}
-                      />
-                    ) : (
-                      <MessageContent content={translatedMessages[index] || msg.text} />
-                    )}
-                    {msg.type === "ai" && preferredLanguage !== "en" && (
-                      <button
-                        type="button"
-                        className="message-translate-btn"
-                        onClick={() => handleTranslateMessage(index, msg.text)}
-                        disabled={translatingId === index}
-                        aria-label={translatedMessages[index] ? "Show original" : `Translate to ${preferredLanguage}`}
-                        title={translatedMessages[index] ? "Show original" : `Translate to ${preferredLanguage}`}
-                      >
-                        <FiGlobe aria-hidden="true" />
-                        <span>{translatingId === index ? "…" : translatedMessages[index] ? "Original" : "Translate"}</span>
-                      </button>
-                    )}
-                    {msg.type === "ai" && Array.isArray(msg.quickReplies) && msg.quickReplies.length > 0 && (
-                      <div className="message-quick-replies">
-                        {msg.quickReplies.map((reply, replyIndex) => {
-                          const label = String(reply?.label ?? reply?.value ?? reply ?? "").trim();
-                          const value = String(reply?.value ?? reply?.label ?? reply ?? "").trim();
-                          if (!label || !value) return null;
-                          return (
-                            <button
-                              key={`${index}-${replyIndex}-${value}`}
-                              type="button"
-                              className="secondary-button message-quick-reply"
-                              onClick={() => handleSend(value)}
-                              disabled={isStreaming}
-                            >
-                              {label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                    {(msg.level || msg.messageId) && (
-                      <div className="message-meta">
-                        {msg.level && <span>{msg.level}</span>}
-                        {msg.messageId && <span>{msg.messageId}</span>}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-
-              {isStreaming && (
-                <div className="message-row ai">
-                  <div className="message-bubble">
-                    {currentStream ? (
-                      <>
-                        <div style={{ display: "inline" }}>
-                          <MessageContent content={currentStream} />
-                          <span className="cursor">▌</span>
-                        </div>
-                        {streamStatus && (
-                          <div className="stream-status">
-                            <span>{streamStatus}</span>
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <span className="thinking">
-                        {streamStatus || "Thinking"}
-                        <span className="dots"></span>
-                      </span>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <div
-                ref={messagesEndRef}
-                style={{ height: 1, scrollMarginBottom: "calc(var(--chat-composer-height, 112px) + 24px)" }}
-              />
-            </div>
+            <MessageList
+              messages={messages.map((msg, index) => ({
+                ...msg,
+                translatedContent: translatedMessages[index],
+                isTranslating: translatingId === index,
+                onTranslate: () => handleTranslateMessage(index, msg.text)
+              }))}
+              isStreaming={isStreaming}
+              currentStream={currentStream}
+              streamStatus={streamStatus}
+              preferredLanguage={preferredLanguage}
+              onQuickReply={handleSend}
+              wsError={wsError}
+              onDismissError={() => setWsError("")}
+              sessionId={sessionId}
+              selectedContent={selectedContent}
+              onOpenNotes={() => handleWorkspaceTabSelect("notes")}
+            />
 
             {!isNearBottom && messages.length > 0 && (
               <button
@@ -2706,75 +2634,32 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
                 aria-label="Scroll to latest message"
                 title="Scroll to latest message"
               >
-                <FiArrowDown />
+                <FaArrowDown />
               </button>
             )}
 
-            <div ref={chatComposerRef} className="workspace-input chat-input-container">
-              <div className="workspace-input__field">
-                <input
-                  type="text"
-                  placeholder="Ask a question, request a summary, or work through a problem..."
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleSend()}
-                />
-              </div>
-              <div className="workspace-input__actions workspace-input__actions--row chat-composer-toolbar">
-                <div className="chat-composer-toolbar__group chat-composer-toolbar__group--left">
-                  <VoiceControl onResult={handleVoice} compact />
-                  <LanguagePicker onChange={setPreferredLanguage} compact={false} />
-                </div>
-
-                <div className="chat-composer-toolbar__group chat-composer-toolbar__group--right">
-                  <button
-                    type="button"
-                    className="icon-button chat-composer-tool"
-                    onClick={handleNewChat}
-                    title="New chat session"
-                    aria-label="New chat session"
-                  >
-                    <FiPlus />
-                  </button>
-                  <button
-                    type="button"
-                    className={`icon-button chat-composer-tool ${autoSpeak ? "chat-composer-tool--active" : ""}`}
-                    onClick={toggleAutoSpeak}
-                    title={autoSpeak ? "Turn auto speak off (Ctrl+Shift+S)" : "Turn auto speak on (Ctrl+Shift+S)"}
-                    aria-label={autoSpeak ? "Turn auto speak off (Ctrl+Shift+S)" : "Turn auto speak on (Ctrl+Shift+S)"}
-                  >
-                    {autoSpeak ? <FiVolume2 /> : <FiVolumeX />}
-                  </button>
-                  {isStreaming && (
-                    <button
-                      type="button"
-                      className="secondary-button chat-composer-stop"
-                      onClick={() => {
-                        closeSocket();
-                        setIsStreaming(false);
-                        setCurrentStream("");
-                      }}
-                      title="Stop response"
-                      aria-label="Stop response"
-                    >
-                      <FiSquare />
-                      <span>Stop</span>
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className="primary-button chat-composer-send"
-                    onClick={handleSend}
-                    title="Send message"
-                    aria-label="Send message"
-                  >
-                    <FiSend />
-                    <span>Send</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
+            <MessageInput
+              onSendMessage={async (messageData) => {
+                // Handle file attachments if any
+                if (messageData.attachments && messageData.attachments.length > 0) {
+                  // TODO: implement file upload logic
+                  console.log('File attachments:', messageData.attachments);
+                }
+                await handleSend(messageData.content);
+              }}
+              isLoading={isStreaming}
+              placeholder="Ask a question, request a summary, or work through a problem..."
+              voiceControlProps={{ onResult: handleVoice }}
+              languagePickerProps={{ onChange: setPreferredLanguage }}
+              autoSpeak={autoSpeak}
+              onToggleAutoSpeak={toggleAutoSpeak}
+              isStreaming={isStreaming}
+              onStopStreaming={() => {
+                closeSocket();
+                setIsStreaming(false);
+                setCurrentStream("");
+              }}
+            />
           </div>
           )}
 
@@ -3024,173 +2909,40 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
           )}
 
           {isContextModalOpen && (
-            <div
-              className="context-modal"
-              role="dialog"
-              aria-modal="true"
-              aria-label="Choose learning context"
-              onClick={() => setIsContextModalOpen(false)}
-            >
-              <div className="context-modal__content" onClick={(event) => event.stopPropagation()}>
-                <div className="subscription-modal__header">
-                  <div>
-                    <div className="workspace-panel__eyebrow">
-                      <FiBookOpen />
-                      <span>Learning setup</span>
-                    </div>
-                    <h3>Choose your learning context</h3>
-                    <p>{contextPrompt || "Select your class and subject, or continue in Explorer Mode for general learning chat."}</p>
-                  </div>
-                  <button
-                    type="button"
-                    className="icon-button icon-button--ghost"
-                    onClick={() => setIsContextModalOpen(false)}
-                    aria-label="Close learning setup"
-                  >
-                    <FiX />
-                  </button>
-                </div>
-
-                <div className="context-modal__grid">
-                  <section className="subscription-card context-modal__section">
-                    <h4>1. Pick your study area</h4>
-                    <div className="context-modal__field-list">
-                      <div className="workspace-select-wrap">
-                        <FiLayers />
-                        <select
-                          aria-label="Select class"
-                          value={selectedClass || ""}
-                          onChange={handleClassChange}
-                          onFocus={() => {
-                            if (classes.length === 0) loadClasses();
-                          }}
-                        >
-                          <option value="">Class</option>
-                          {visibleClasses.map((item) => (
-                            <option key={item} value={item}>
-                              {item}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="workspace-select-wrap">
-                        <FiBook />
-                        <select
-                          aria-label="Select subject"
-                          value={selectedSubject || ""}
-                          onChange={handleSubjectChange}
-                          disabled={!selectedClass}
-                        >
-                          <option value="">Subject</option>
-                          {subjects.map((item) => (
-                            <option key={item} value={item}>
-                              {item}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="workspace-select-wrap">
-                        <FiFolder />
-                        <select
-                          aria-label="Select folder"
-                          value={selectedFolder || ""}
-                          onChange={handleFolderChange}
-                          disabled={!selectedSubject}
-                        >
-                          <option value="">Folder</option>
-                          {folders.map((item) => (
-                            <option key={item} value={item}>
-                              {item}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="workspace-select-wrap">
-                        <FiFileText />
-                        <select
-                          aria-label="Select file"
-                          value={selectedContent || ""}
-                          onChange={handleContentChange}
-                          disabled={contents.length === 0}
-                        >
-                          <option value="">File</option>
-                          {contents.map((item) => (
-                            <option key={item.content_id} value={item.content_id} disabled={item.selectable === false}>
-                              {item.selectable === false
-                                ? `${item.title} [${item.status_label || "Processing"}]`
-                                : item.title}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                    <p className="sidebar-note">Class and subject are required for guided study tools. Folder and file are optional.</p>
-                    {planSummary && <p className="sidebar-note">{classAccessSummary}</p>}
-                  </section>
-
-                  <section className="subscription-card context-modal__section">
-                    <h4>2. Add your own notes</h4>
-                    <div
-                      className={`context-dropzone ${contextDropActive ? "is-active" : ""}`}
-                      onDragOver={(event) => {
-                        event.preventDefault();
-                        setContextDropActive(true);
-                      }}
-                      onDragLeave={() => setContextDropActive(false)}
-                      onDrop={handleContextDrop}
-                    >
-                      <FiArrowDown />
-                      <strong>Drag and drop a PDF here</strong>
-                      <span>
-                        We’ll save it to <strong>{selectedFolder || "Notes"}</strong>, prepare it in the background, and let you keep studying.
-                      </span>
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={!selectedClass || !selectedSubject || isUploading || uploadLimitState.blocked}
-                      >
-                        <FiPlus />
-                        <span>{isUploading ? "Uploading..." : "Choose PDF"}</span>
-                      </button>
-                      {uploadLimitState.blocked ? (
-                        <span className="sidebar-note">
-                          Upload limit reached ({uploadLimitState.used}/{uploadLimitState.limit}). Upgrade plan to continue.
-                        </span>
-                      ) : null}
-                    </div>
-
-                    <div className="context-modal__actions">
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        onClick={refreshIndexedFiles}
-                        disabled={!selectedClass || !selectedSubject || kbStatus.contentsLoading}
-                      >
-                        <FiRefreshCw />
-                        <span>Refresh files</span>
-                      </button>
-                      <button type="button" className="secondary-button" onClick={handleExplorerModeSelection}>
-                        <FiGlobe />
-                        <span>Proceed in Explorer Mode</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="primary-button"
-                        onClick={saveLearningContext}
-                        disabled={!selectedClass || !selectedSubject}
-                      >
-                        <FiCheck />
-                        <span>Continue with this context</span>
-                      </button>
-                    </div>
-                  </section>
-                </div>
-              </div>
-            </div>
+            <LearningContextModal
+              selectedClass={selectedClass}
+              selectedSubject={selectedSubject}
+              selectedFolder={selectedFolder}
+              selectedContent={selectedContent}
+              classes={classes}
+              visibleClasses={visibleClasses}
+              subjects={subjects}
+              folders={folders}
+              contents={contents}
+              onClassChange={handleClassChange}
+              onSubjectChange={handleSubjectChange}
+              onFolderChange={handleFolderChange}
+              onContentChange={handleContentChange}
+              loadClasses={loadClasses}
+              loadSubjects={loadSubjects}
+              saveLearningContext={saveLearningContext}
+              contextPrompt={contextPrompt}
+              isUploading={isUploading}
+              uploadLimitState={uploadLimitState}
+              fileInputRef={fileInputRef}
+              refreshIndexedFiles={refreshIndexedFiles}
+              kbStatus={kbStatus}
+              handleExplorerModeSelection={handleExplorerModeSelection}
+              contextDropActive={contextDropActive}
+              handleContextDrop={handleContextDrop}
+              setContextDropActive={setContextDropActive}
+              uploadedFiles={uploadedFiles}
+              onRenameUploadedFile={handleRenameUploadedFile}
+              onDeleteUploadedFile={handleDeleteUploadedFile}
+              onClose={() => setIsContextModalOpen(false)}
+              planSummary={planSummary}
+              classAccessSummary={classAccessSummary}
+            />
           )}
 
           {isSubscriptionModalOpen && (
@@ -3329,6 +3081,9 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
                                   .filter(Boolean)
                                   .join(", ") || "Selected classes"} — expires{" "}
                                 {new Date(subscriptionActivated.expires_at).toLocaleDateString()}
+                              </p>
+                              <p className="sidebar-note">
+                                Activation mode: {subscriptionActivated.activation_mode || "manual"}.
                               </p>
                             </div>
                           </div>

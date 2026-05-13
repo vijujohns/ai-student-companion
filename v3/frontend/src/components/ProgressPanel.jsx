@@ -195,6 +195,7 @@ function normalizeReminderSettings(settings) {
     enabled: settings?.enabled !== false,
     frequency: settings?.frequency || "daily",
     muted_ids: mutedIds,
+    delivery_scope: settings?.delivery_scope || "local-only",
   };
 }
 
@@ -986,6 +987,9 @@ export default function ProgressPanel({ planSummary = null, onPlanAction = null,
                       {reminderSettings.enabled ? "Enabled" : "Muted"}
                     </span>
                   </div>
+                  <p className="sidebar-note">
+                    Reminder delivery is local-only and controlled by your stored preferences.
+                  </p>
                   <div className="progress-toolbar__controls progress-toolbar__controls--dense">
                     <label className="progress-toolbar__field">
                       <span>Reminder frequency</span>

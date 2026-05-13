@@ -1,3 +1,5 @@
+import { FiBook, FiFileText, FiFolder, FiLayers } from "react-icons/fi";
+
 export function countPendingUploadsInScope(uploadedFiles, selectedClass, selectedSubject, selectedFolder) {
   return uploadedFiles.filter((item) => {
     if (selectedClass && item.class_name !== selectedClass) return false;
@@ -5,6 +7,36 @@ export function countPendingUploadsInScope(uploadedFiles, selectedClass, selecte
     if (selectedFolder && item.folder_name !== selectedFolder) return false;
     return !item.indexed;
   }).length;
+}
+
+export function getLearningContextPillItems({ selectedClass, selectedSubject, selectedFolder, selectedContentItem }) {
+  const items = [];
+  if (selectedClass) {
+    items.push({ key: "class", label: "Class", value: selectedClass, icon: FiLayers });
+  }
+  if (selectedSubject) {
+    items.push({ key: "subject", label: "Subject", value: selectedSubject, icon: FiBook });
+  }
+  if (selectedFolder) {
+    items.push({ key: "folder", label: "Folder", value: selectedFolder, icon: FiFolder });
+  }
+  if (selectedContentItem?.title) {
+    items.push({ key: "file", label: "File", value: selectedContentItem.title, icon: FiFileText });
+  }
+  return items;
+}
+
+export function getLearningContextReadinessMeta({ pendingUploadsInScope, hasRequiredStudyContext, isExplorerMode }) {
+  if (isExplorerMode) {
+    return { label: "Explorer mode is open", tone: "info" };
+  }
+  if (!hasRequiredStudyContext) {
+    return { label: "Study context incomplete", tone: "info" };
+  }
+  if (pendingUploadsInScope > 0) {
+    return { label: `${pendingUploadsInScope} file(s) pending indexing`, tone: "warning" };
+  }
+  return { label: "Index ready", tone: "success" };
 }
 
 export function buildKnowledgeBaseStatusMessage({

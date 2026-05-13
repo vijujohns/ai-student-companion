@@ -752,6 +752,30 @@ export default function RoleHubPanel({
     }
   };
 
+  const handleUnlinkSelectedStudent = async () => {
+    if (!isMentorRole || !activeStudent) return;
+    const studentLabel = activeStudentRecord?.first_name || activeStudentRecord?.email || activeStudent;
+    if (!window.confirm(`Unlink ${studentLabel}? Shared notes and assignments remain with the student account.`)) return;
+
+    setError("");
+    try {
+      const res = await apiFetch(`/relationships/students/${encodeURIComponent(activeStudent)}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        throw new Error(await parseApiError(res, "Unable to unlink student."));
+      }
+      setSelectedStudent("");
+      setStudentProgress(null);
+      setStudentMastery([]);
+      setStudentInsights(null);
+      setStudentStudyPlan(null);
+      await loadRoleData();
+    } catch (err) {
+      setError(String(err.message || err));
+    }
+  };
+
   const handleApplyGlobalModelProfile = async () => {
     if (!isAdminRole || !selectedModelProfile) return;
 
@@ -1361,13 +1385,21 @@ export default function RoleHubPanel({
               <FiLink />
               <span>Link Student</span>
             </button>
+            <button type="button" className="secondary-button" onClick={handleUnlinkSelectedStudent} disabled={!activeStudent}>
+              <FiTrash2 />
+              <span>Unlink Selected</span>
+            </button>
           </div>
+          <p className="sidebar-note">
+            Linking is direct for existing student accounts. Teachers and parents can only access students they have linked.
+          </p>
 
           {previewRole === "teacher" ? (
             <>
               <div className="role-hub-panel__note-box">
                 <strong>Assignment Templates</strong>
                 <p className="sidebar-note">Start with a reusable class routine and send it to the selected learners.</p>
+                <p className="sidebar-note">Saved templates are stored in your browser only. Use export/import JSON to move templates between devices.</p>
                 <div className="role-hub-panel__note-actions">
                   {DEFAULT_ASSIGNMENT_TEMPLATES.map((template) => (
                     <button
@@ -1422,7 +1454,7 @@ export default function RoleHubPanel({
               {savedAssignmentTemplates.length > 0 ? (
                 <div className="role-hub-panel__note-box">
                   <strong>Saved Templates</strong>
-                  <p className="sidebar-note">Reuse your own saved class routines any time.</p>
+                  <p className="sidebar-note">Reuse your own saved class routines any time. Saved templates are stored locally in the browser.</p>
                   <div className="role-hub-panel__note-actions">
                     <span>{savedTemplateSummary.totalCount} saved templates</span>
                     <span>{savedTemplateSummary.favoriteCount} favorites</span>

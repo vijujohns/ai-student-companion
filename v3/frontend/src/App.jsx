@@ -11,6 +11,7 @@ import {
   startOfflineSyncLoop,
 } from "./services/api";
 import { setupInstallPrompt } from "./services/pwa";
+import { useWorkspaceNavigation } from "./hooks/useWorkspaceNavigation";
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -28,6 +29,9 @@ function App() {
   const [headerAccountMenuOpen, setHeaderAccountMenuOpen] = useState(false);
   const [externalTabRequest, setExternalTabRequest] = useState(null);
   const accountMenuRef = useRef(null);
+
+  // Workspace navigation state management
+  const workspaceNavigation = useWorkspaceNavigation("chat");
 
   const refreshUserIdentity = () => {
     setUserName(localStorage.getItem("username") || "student");
@@ -226,9 +230,10 @@ function App() {
 
   return (
     <div className={`app-shell app-shell--density-${uiDensity}`}>
+      <a className="skip-link" href="#main-content">Skip to main content</a>
       <div className="app-shell__backdrop" />
       <div className={`app-shell__content ${isLoggedIn ? "app-shell__content--workspace" : ""}`}>
-        <header className="app-shell__header">
+        <header className="app-shell__header" role="banner">
           <div className="app-shell__brand">
             <span className="app-shell__brand-mark">
               <GiBrain />
@@ -273,6 +278,7 @@ function App() {
                   className="app-shell__account-trigger"
                   onClick={() => setHeaderAccountMenuOpen((prev) => !prev)}
                   aria-label="Open account menu"
+                  aria-controls="account-menu"
                   aria-haspopup="menu"
                   aria-expanded={headerAccountMenuOpen}
                   title="Open account menu"
@@ -280,7 +286,7 @@ function App() {
                   <FiMoreVertical />
                 </button>
                 {headerAccountMenuOpen ? (
-                  <div className="app-shell__account-menu" role="menu" aria-label="Account menu">
+                  <div id="account-menu" className="app-shell__account-menu" role="menu" aria-label="Account menu">
                     <div className="app-shell__account-menu-section">
                       <span className="app-shell__account-menu-section-label">Workspace status</span>
                       <div className="app-shell__account-status-list" role="status" aria-live="polite">
@@ -377,12 +383,14 @@ function App() {
           </div>
         </header>
 
-        {!isLoggedIn && !isBootstrappingAuth ? (
-          <Login onLogin={handleLogin} sessionExpired={sessionExpired} />
-        ) : null}
-        {isLoggedIn ? (
-          <ChatPanel externalTabRequest={externalTabRequest} />
-        ) : null}
+        <main id="main-content" className="app-shell__main" role="main" aria-label="Application content">
+          {!isLoggedIn && !isBootstrappingAuth ? (
+            <Login onLogin={handleLogin} sessionExpired={sessionExpired} />
+          ) : null}
+          {isLoggedIn ? (
+            <ChatPanel externalTabRequest={externalTabRequest} workspaceNavigation={workspaceNavigation} />
+          ) : null}
+        </main>
       </div>
     </div>
   );

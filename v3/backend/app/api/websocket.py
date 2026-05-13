@@ -111,6 +111,8 @@ async def websocket_ask(ws: WebSocket):
     dlog("WS", "Accepted /ws/ask", user=user["username"])
     print(f"✅ WebSocket accepted for user: {user['username']}")
 
+    quota_charged = False
+    quota_released = False
     try:
         while True:
             data = await ws.receive_text()
@@ -141,6 +143,8 @@ async def websocket_ask(ws: WebSocket):
             print(f"🧠 Query: {query}")
 
             allowed, message_id = consume_quota(user["username"], "ask")
+            quota_charged = False
+            quota_released = False
             if not allowed:
                 msg = get_message(message_id)
                 await send_json(
@@ -155,6 +159,8 @@ async def websocket_ask(ws: WebSocket):
                 await send_json(ws, {"type": "end"})
                 continue
 
+            quota_charged = True
+
             # -------- Stream Response --------
             routed_task = route_task(
                 query=query or "",
@@ -168,6 +174,7 @@ async def websocket_ask(ws: WebSocket):
             keepalive_stop = asyncio.Event()
             keepalive_task = asyncio.create_task(send_waiting_status(ws, keepalive_stop))
             await send_json(ws, {"type": "status", "data": "Preparing your answer..."})
+            stream_completed = False
             try:
                 use_generator_executor = bool(requested_task) or bool(routed_task.explicit) or routed_task.model_task == "summary"
                 if is_utility_task(routed_task.model_task):
@@ -219,8 +226,11 @@ async def websocket_ask(ws: WebSocket):
                     token_count += 1
                     if not await send_json(ws, {"type": "chunk", "data": token}):
                         break
+                stream_completed = True
             except Exception as e:
-                release_usage(user["username"], "ask")
+                if quota_charged and not quota_released:
+                    release_usage(user["username"], "ask")
+                    quota_released = True
                 derror("WS", f"Streaming error /ws/ask: {e}", user=user["username"])
                 print(f"❌ Streaming error: {e}")
                 traceback.print_exc()
@@ -228,6 +238,10 @@ async def websocket_ask(ws: WebSocket):
             finally:
                 keepalive_stop.set()
                 await asyncio.gather(keepalive_task, return_exceptions=True)
+
+            if quota_charged and not quota_released and not stream_completed:
+                release_usage(user["username"], "ask")
+                quota_released = True
 
             elapsed = (time.perf_counter() - t_start) * 1000
             dlog("WS", "Stream complete /ws/ask",
@@ -237,13 +251,21 @@ async def websocket_ask(ws: WebSocket):
                  response_chars=len(full_response),
                  elapsed_ms=f"{elapsed:.1f}ms")
 
-            # End signal
+            # End signal and reset charge state for the next request or disconnect.
             await send_json(ws, {"type": "end"})
+            quota_charged = False
+            quota_released = False
 
     except WebSocketDisconnect:
+        if quota_charged and not quota_released:
+            release_usage(user["username"], "ask")
+            quota_released = True
         dlog("WS", "Client disconnected /ws/ask", user=user["username"])
         print("⚠️ Client disconnected /ws/ask")
     except Exception as e:
+        if quota_charged and not quota_released:
+            release_usage(user["username"], "ask")
+            quota_released = True
         derror("WS", f"WebSocket error /ws/ask: {e}", user=user["username"])
         print(f"❌ WebSocket error /ws/ask: {e}")
         traceback.print_exc()

@@ -272,9 +272,11 @@ export default function Login({ onLogin, sessionExpired = false }) {
           </p>
         </div>
 
-        <div className="auth-mode-tabs">
+        <div className="auth-mode-tabs" role="tablist" aria-label="Authentication mode">
           <button
             type="button"
+            role="tab"
+            aria-selected={mode === "login"}
             className={mode === "login" ? "active" : ""}
             onClick={() => switchMode("login")}
           >
@@ -283,6 +285,8 @@ export default function Login({ onLogin, sessionExpired = false }) {
           </button>
           <button
             type="button"
+            role="tab"
+            aria-selected={mode === "register"}
             className={mode === "register" ? "active" : ""}
             onClick={() => switchMode("register")}
           >
@@ -291,6 +295,8 @@ export default function Login({ onLogin, sessionExpired = false }) {
           </button>
           <button
             type="button"
+            role="tab"
+            aria-selected={mode === "reset"}
             className={mode === "reset" ? "active" : ""}
             onClick={() => switchMode("reset")}
           >
@@ -300,21 +306,21 @@ export default function Login({ onLogin, sessionExpired = false }) {
         </div>
 
         {sessionExpired && (
-          <div className="login-alert login-alert--warning">
+          <div className="login-alert login-alert--warning" role="status" aria-live="assertive" aria-atomic="true">
             <FiAlertCircle />
             <span>Your session has expired. Please log in again.</span>
           </div>
         )}
 
         {error && !sessionExpired && (
-          <div className="login-alert login-alert--error">
+          <div className="login-alert login-alert--error" role="status" aria-live="assertive" aria-atomic="true">
             <FiAlertCircle />
             <span>{error}</span>
           </div>
         )}
 
         {success && (
-          <div className="login-alert login-alert--success">
+          <div className="login-alert login-alert--success" role="status" aria-live="polite" aria-atomic="true">
             <FiCheckCircle />
             <span>{success}</span>
           </div>
@@ -408,6 +414,7 @@ export default function Login({ onLogin, sessionExpired = false }) {
               <div className="login-field__input login-date-input">
                 <FiCalendar />
                 <DatePicker
+                  id="registerDob"
                   selected={registerDob}
                   onChange={(date) => setRegisterDob(date)}
                   dateFormat="yyyy-MM-dd"
@@ -480,6 +487,7 @@ export default function Login({ onLogin, sessionExpired = false }) {
               <div className="login-field__input login-date-input">
                 <FiCalendar />
                 <DatePicker
+                  id="resetDob"
                   selected={resetDob}
                   onChange={(date) => setResetDob(date)}
                   dateFormat="yyyy-MM-dd"

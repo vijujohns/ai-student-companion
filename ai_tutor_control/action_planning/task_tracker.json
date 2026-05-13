@@ -1,0 +1,783 @@
+{
+  "route": "B",
+  "route_name": "Balanced Incremental Improvement",
+  "created_at": "2026-05-03",
+  "last_updated": "2026-05-11",
+  "status_values": [
+    "Not Started",
+    "In Progress",
+    "Done"
+  ],
+  "summary": {
+    "total_tasks": 43,
+    "done_tasks": 43,
+    "in_progress_tasks": 0,
+    "not_started_tasks": 0,
+    "overall_progress_percent": 100
+  },
+  "tasks": [
+    {
+      "id": "P0-T01",
+      "phase": "Phase 0",
+      "title": "Record baseline repository state",
+      "description": "Capture current git status, pre-existing dirty files, generated planning files, and any environment assumptions before implementation begins.",
+      "dependent_modules_files": [
+        "ai_tutor_control/",
+        "v3/frontend/src/components/ChatPanel.jsx",
+        "git status"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [],
+      "estimated_effort": "0.5 day"
+    },
+    {
+      "id": "P0-T02",
+      "phase": "Phase 0",
+      "title": "Run backend baseline tests",
+      "description": "Run the backend test suite or document blockers and failing/flaky tests.",
+      "dependent_modules_files": [
+        "v3/test_suite/backend",
+        "v3/backend/app"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P0-T01"
+      ],
+      "estimated_effort": "0.5-1 day"
+    },
+    {
+      "id": "P0-T03",
+      "phase": "Phase 0",
+      "title": "Run frontend baseline tests",
+      "description": "Run frontend unit/e2e or document blockers and failing/flaky tests.",
+      "dependent_modules_files": [
+        "v3/test_suite/frontend",
+        "v3/frontend/src",
+        "v3/frontend/package.json"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P0-T01"
+      ],
+      "estimated_effort": "0.5-1 day"
+    },
+    {
+      "id": "P0-T04",
+      "phase": "Phase 0",
+      "title": "Create smoke-flow checklist",
+      "description": "Define manual or automated smoke checks for login, chat, content selection, upload/index, lesson, quiz, notes, and progress.",
+      "dependent_modules_files": [
+        "ai_tutor_control/action_planning/progress.md",
+        "v3/test_suite"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P0-T02",
+        "P0-T03"
+      ],
+      "estimated_effort": "0.5 day"
+    },
+    {
+      "id": "P1-T01",
+      "phase": "Phase 1",
+      "title": "Normalize priority API error envelopes",
+      "description": "Make critical endpoints return consistent message/error envelopes while preserving frontend compatibility.",
+      "dependent_modules_files": [
+        "v3/backend/app/api/routes.py",
+        "v3/backend/app/modules/messages.py",
+        "v3/backend/app/main.py",
+        "v3/frontend/src/services/api.js"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P0-T04"
+      ],
+      "estimated_effort": "2-3 days"
+    },
+    {
+      "id": "P1-T02",
+      "phase": "Phase 1",
+      "title": "Fix quota release on failed streaming",
+      "description": "Audit and harden quota release behavior for WebSocket errors, disconnects, and generation failures.",
+      "dependent_modules_files": [
+        "v3/backend/app/api/websocket.py",
+        "v3/backend/app/modules/policy.py",
+        "v3/backend/app/modules/rag.py"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P0-T04"
+      ],
+      "estimated_effort": "1-2 days"
+    },
+    {
+      "id": "P1-T03",
+      "phase": "Phase 1",
+      "title": "Expand runtime health diagnostics",
+      "description": "Add health visibility for DB, FAISS/index freshness, cache/Redis, OCR, and configured model availability.",
+      "dependent_modules_files": [
+        "v3/backend/app/api/routes.py",
+        "v3/backend/app/modules/db.py",
+        "v3/backend/app/modules/faiss_store.py",
+        "v3/backend/app/modules/cache.py",
+        "v3/backend/app/modules/ocr.py",
+        "v3/backend/app/modules/model_manager.py"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P0-T04"
+      ],
+      "estimated_effort": "2 days"
+    },
+    {
+      "id": "P1-T04",
+      "phase": "Phase 1",
+      "title": "Improve frontend operational error UI",
+      "description": "Show API/WebSocket failures as structured banners/toasts instead of blending them into assistant content.",
+      "dependent_modules_files": [
+        "v3/frontend/src/services/api.js",
+        "v3/frontend/src/services/websocket.js",
+        "v3/frontend/src/components/ChatPanel.jsx",
+        "v3/frontend/src/utils/streamToken.js"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P1-T01"
+      ],
+      "estimated_effort": "2-3 days"
+    },
+    {
+      "id": "P1-T05",
+      "phase": "Phase 1",
+      "title": "Clarify upload and indexing states",
+      "description": "Expose queued/running/indexed/failed/retry states consistently in backend status and frontend UI.",
+      "dependent_modules_files": [
+        "v3/backend/app/modules/file_management.py",
+        "v3/backend/app/api/routes.py",
+        "v3/frontend/src/components/ChatPanel.jsx",
+        "v3/frontend/src/hooks/useKnowledgeBaseLoader.js"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P1-T01",
+        "P1-T03"
+      ],
+      "estimated_effort": "2-4 days"
+    },
+    {
+      "id": "P1-T06",
+      "phase": "Phase 1",
+      "title": "Add stabilization regression tests",
+      "description": "Add tests for quota release, session expiry, upload/index retry, and health response behavior.",
+      "dependent_modules_files": [
+        "v3/test_suite/backend",
+        "v3/test_suite/frontend"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P1-T02",
+        "P1-T03",
+        "P1-T05"
+      ],
+      "estimated_effort": "2-3 days"
+    },
+    {
+      "id": "P2-T01",
+      "phase": "Phase 2",
+      "title": "Design backend router split",
+      "description": "Define router module boundaries and migration order while preserving all current public paths.",
+      "dependent_modules_files": [
+        "v3/backend/app/api/routes.py",
+        "v3/backend/app/api"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P1-T06"
+      ],
+      "estimated_effort": "1 day"
+    },
+    {
+      "id": "P2-T02",
+      "phase": "Phase 2",
+      "title": "Extract auth profile chat session routers",
+      "description": "Move auth/profile/chat/session/context endpoints into domain routers with compatibility preserved.",
+      "dependent_modules_files": [
+        "v3/backend/app/api/routes.py",
+        "v3/backend/app/api",
+        "v3/backend/app/schemas",
+        "v3/backend/app/modules/adapters/default_services.py"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P2-T01"
+      ],
+      "estimated_effort": "3-5 days"
+    },
+    {
+      "id": "P2-T03",
+      "phase": "Phase 2",
+      "title": "Extract knowledge lesson quiz assessment routers",
+      "description": "Move knowledge/files, lessons/artifacts, quiz/flashcards, and assessment endpoints into domain routers.",
+      "dependent_modules_files": [
+        "v3/backend/app/api/routes.py",
+        "v3/backend/app/modules/file_management.py",
+        "v3/backend/app/modules/lesson_plan.py",
+        "v3/backend/app/modules/quiz.py",
+        "v3/backend/app/modules/assessment.py"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P2-T02"
+      ],
+      "estimated_effort": "4-6 days"
+    },
+    {
+      "id": "P2-T04",
+      "phase": "Phase 2",
+      "title": "Extract progress collaboration commerce admin routers",
+      "description": "Move progress/preferences, relationship/collaboration, subscription/plan, and admin endpoints into domain routers.",
+      "dependent_modules_files": [
+        "v3/backend/app/api/routes.py",
+        "v3/backend/app/modules/analytics.py",
+        "v3/backend/app/modules/subscriptions.py",
+        "v3/backend/app/modules/adapters/default_services.py"
+      ],
+      "priority": "Medium",
+      "status": "Done",
+      "dependencies": [
+        "P2-T03"
+      ],
+      "estimated_effort": "4-6 days"
+    },
+    {
+      "id": "P2-T05",
+      "phase": "Phase 2",
+      "title": "Expand service port adoption",
+      "description": "Move route orchestration into service methods where natural, especially knowledge, learning-session, progress, collaboration, and commercial seams.",
+      "dependent_modules_files": [
+        "v3/backend/app/modules/interfaces/service_ports.py",
+        "v3/backend/app/modules/adapters/default_services.py",
+        "v3/backend/app/api"
+      ],
+      "priority": "Medium",
+      "status": "Done",
+      "dependencies": [
+        "P2-T04"
+      ],
+      "estimated_effort": "4-7 days"
+    },
+    {
+      "id": "P2-T06",
+      "phase": "Phase 2",
+      "title": "Normalize priority response models",
+      "description": "Add response schemas or documented envelope DTOs for mobile-critical and high-use endpoints.",
+      "dependent_modules_files": [
+        "v3/backend/app/schemas/response.py",
+        "v3/backend/app/api"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P2-T03"
+      ],
+      "estimated_effort": "3-5 days"
+    },
+    {
+      "id": "P2-T07",
+      "phase": "Phase 2",
+      "title": "Add route contract tests",
+      "description": "Add or update tests to prove moved route groups preserve public paths and payload shapes.",
+      "dependent_modules_files": [
+        "v3/test_suite/backend/test_contract_envelope.py",
+        "v3/test_suite/backend/test_contract_snapshots.py",
+        "v3/test_suite/backend"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P2-T02",
+        "P2-T03",
+        "P2-T04",
+        "P2-T06"
+      ],
+      "estimated_effort": "2-4 days"
+    },
+    {
+      "id": "P3-T01",
+      "phase": "Phase 3",
+      "title": "Introduce workspace navigation state",
+      "description": "Add route-like workspace panel state for major workspace areas without requiring a full router migration.",
+      "dependent_modules_files": [
+        "v3/frontend/src/components/ChatPanel.jsx",
+        "v3/frontend/src/App.jsx"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P1-T04"
+      ],
+      "estimated_effort": "2-4 days"
+    },
+    {
+      "id": "P3-T02",
+      "phase": "Phase 3",
+      "title": "Build LearningContextBar",
+      "description": "Create a persistent context display for class, subject, folder, content, and index readiness.",
+      "dependent_modules_files": [
+        "v3/frontend/src/components/ChatPanel.jsx",
+        "v3/frontend/src/hooks/useKnowledgeBaseLoader.js",
+        "v3/frontend/src/utils/kbSelectors.js"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P1-T05",
+        "P3-T01"
+      ],
+      "estimated_effort": "2-3 days"
+    },
+    {
+      "id": "P3-T03",
+      "phase": "Phase 3",
+      "title": "Extract upload indexing UI",
+      "description": "Move upload/index status, retry, and readiness UI into a dedicated component or drawer.",
+      "dependent_modules_files": [
+        "v3/frontend/src/components/ChatPanel.jsx",
+        "v3/frontend/src/hooks/useKnowledgeBaseLoader.js"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P3-T02"
+      ],
+      "estimated_effort": "3-5 days"
+    },
+    {
+      "id": "P3-T04",
+      "phase": "Phase 3",
+      "title": "Extract shared assignment utilities",
+      "description": "Consolidate duplicated date/filter/sort assignment logic across ProgressPanel, RoleHubPanel, and AssignmentsPanel.",
+      "dependent_modules_files": [
+        "v3/frontend/src/components/ProgressPanel.jsx",
+        "v3/frontend/src/components/RoleHubPanel.jsx",
+        "v3/frontend/src/components/AssignmentsPanel.jsx",
+        "v3/frontend/src/utils"
+      ],
+      "priority": "Medium",
+      "status": "Done",
+      "dependencies": [
+        "P0-T04"
+      ],
+      "estimated_effort": "2-3 days"
+    },
+    {
+      "id": "P3-T05",
+      "phase": "Phase 3",
+      "title": "Split ChatPanel focused components",
+      "description": "Extract focused components/services from ChatPanel while preserving behavior and tests.",
+      "dependent_modules_files": [
+        "v3/frontend/src/components/ChatPanel.jsx",
+        "v3/frontend/src/hooks",
+        "v3/frontend/src/services"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P3-T01",
+        "P3-T02",
+        "P3-T03"
+      ],
+      "estimated_effort": "5-8 days"
+    },
+    {
+      "id": "P3-T06",
+      "phase": "Phase 3",
+      "title": "Decompose RoleHubPanel",
+      "description": "Split RoleHub into role-specific sections/subcomponents for roster, notes, assignments, templates, reports, and admin profile controls.",
+      "dependent_modules_files": [
+        "v3/frontend/src/components/RoleHubPanel.jsx"
+      ],
+      "priority": "Medium",
+      "status": "Done",
+      "dependencies": [
+        "P3-T04"
+      ],
+      "estimated_effort": "5-8 days"
+    },
+    {
+      "id": "P3-T07",
+      "phase": "Phase 3",
+      "title": "Improve accessibility and mobile responsiveness",
+      "description": "Add keyboard/focus improvements and mobile breakpoints for sidebar, chat, viewer, and dense workspace panels.",
+      "dependent_modules_files": [
+        "v3/frontend/src/components/style.css",
+        "v3/frontend/src/index.css",
+        "v3/frontend/src/components"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P3-T05"
+      ],
+      "estimated_effort": "4-6 days"
+    },
+    {
+      "id": "P3-T08",
+      "phase": "Phase 3",
+      "title": "Add frontend UX regression tests",
+      "description": "Add tests for workspace navigation, context bar, upload drawer, keyboard/focus, and mobile viewport behavior.",
+      "dependent_modules_files": [
+        "v3/test_suite/frontend/unit",
+        "v3/test_suite/frontend/e2e"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P3-T02",
+        "P3-T03",
+        "P3-T07"
+      ],
+      "estimated_effort": "3-5 days"
+    },
+    {
+      "id": "P4-T01",
+      "phase": "Phase 4",
+      "title": "Add uploaded document management",
+      "description": "Implement uploaded file rename/delete/manage APIs and UI with permissions and index cleanup behavior.",
+      "dependent_modules_files": [
+        "v3/backend/app/modules/file_management.py",
+        "v3/backend/app/api",
+        "v3/frontend/src/components"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P2-T03",
+        "P3-T03"
+      ],
+      "estimated_effort": "5-8 days"
+    },
+    {
+      "id": "P4-T02",
+      "phase": "Phase 4",
+      "title": "Improve student mentor linking workflow",
+      "description": "Add invitation/approval or clearly scoped linking rules with matching UI and authorization tests.",
+      "dependent_modules_files": [
+        "v3/backend/app/modules/adapters/default_services.py",
+        "v3/backend/app/modules/db.py",
+        "v3/frontend/src/components/RoleHubPanel.jsx"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P2-T04",
+        "P3-T06"
+      ],
+      "estimated_effort": "5-8 days"
+    },
+    {
+      "id": "P4-T03",
+      "phase": "Phase 4",
+      "title": "Make assignment templates server backed or explicit local-only",
+      "description": "Choose and implement either server-backed templates or clear local-only UX with export/import retained.",
+      "dependent_modules_files": [
+        "v3/frontend/src/components/RoleHubPanel.jsx",
+        "v3/backend/app/modules/db.py",
+        "v3/backend/app/api"
+      ],
+      "priority": "Medium",
+      "status": "Done",
+      "dependencies": [
+        "P3-T06"
+      ],
+      "estimated_effort": "3-6 days"
+    },
+    {
+      "id": "P4-T04",
+      "phase": "Phase 4",
+      "title": "Build admin operational MVP",
+      "description": "Add admin visibility and controls for failed jobs, users, subscriptions, message catalog, and audit as scoped MVP screens.",
+      "dependent_modules_files": [
+        "v3/backend/app/api",
+        "v3/backend/app/modules/db.py",
+        "v3/backend/app/modules/file_management.py",
+        "v3/frontend/src/components/AdminPanel.jsx",
+        "v3/frontend/src/components/RoleHubPanel.jsx"
+      ],
+      "priority": "Medium",
+      "status": "Done",
+      "dependencies": [
+        "P2-T04",
+        "P3-T06"
+      ],
+      "estimated_effort": "6-10 days"
+    },
+    {
+      "id": "P4-T05",
+      "phase": "Phase 4",
+      "title": "Resolve subscription activation mode",
+      "description": "Decide and implement real payment integration, explicit mock mode, or deferred UI labeling for subscriptions.",
+      "dependent_modules_files": [
+        "v3/backend/app/modules/subscriptions.py",
+        "v3/frontend/src/components/BillingPanel.jsx",
+        "v3/frontend/src/components/ChatPanel.jsx"
+      ],
+      "priority": "Medium",
+      "status": "Done",
+      "dependencies": [
+        "P2-T04"
+      ],
+      "estimated_effort": "2-8 days"
+    },
+    {
+      "id": "P4-T06",
+      "phase": "Phase 4",
+      "title": "Resolve reminder scheduler scope",
+      "description": "Choose server scheduler, local-only reminders, or defer/remove reminder UI, then implement the selected scope.",
+      "dependent_modules_files": [
+        "v3/backend/app/modules/analytics.py",
+        "v3/backend/app/modules/db.py",
+        "v3/frontend/src/components/ProgressPanel.jsx"
+      ],
+      "priority": "Medium",
+      "status": "Done",
+      "dependencies": [
+        "P2-T04"
+      ],
+      "estimated_effort": "3-8 days"
+    },
+    {
+      "id": "P4-T07",
+      "phase": "Phase 4",
+      "title": "Add product completion tests",
+      "description": "Cover document management, collaboration, assignment templates, admin MVP, subscriptions, and reminders according to selected scope.",
+      "dependent_modules_files": [
+        "v3/test_suite/backend",
+        "v3/test_suite/frontend"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P4-T01",
+        "P4-T02",
+        "P4-T03",
+        "P4-T04",
+        "P4-T05",
+        "P4-T06"
+      ],
+      "estimated_effort": "4-7 days"
+    },
+    {
+      "id": "P5-T01",
+      "phase": "Phase 5",
+      "title": "Define API versioning strategy",
+      "description": "Design `/api/v1` compatibility/versioning without breaking current frontend paths.",
+      "dependent_modules_files": [
+        "v3/backend/app/api",
+        "ai_tutor_control/mobile_readiness.md"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P2-T07"
+      ],
+      "estimated_effort": "2 days"
+    },
+    {
+      "id": "P5-T02",
+      "phase": "Phase 5",
+      "title": "Add pagination to mobile-heavy collections",
+      "description": "Add pagination for sessions, history, notes, assignments, and artifacts where collections can grow.",
+      "dependent_modules_files": [
+        "v3/backend/app/api",
+        "v3/backend/app/modules/history.py",
+        "v3/backend/app/modules/notes.py",
+        "v3/backend/app/modules/artifacts.py",
+        "v3/frontend/src/hooks",
+        "v3/frontend/src/components"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P5-T01"
+      ],
+      "estimated_effort": "5-8 days"
+    },
+    {
+      "id": "P5-T03",
+      "phase": "Phase 5",
+      "title": "Add OpenAPI response model coverage",
+      "description": "Add or document response models for mobile-critical endpoints and generate/validate API contracts.",
+      "dependent_modules_files": [
+        "v3/backend/app/schemas/response.py",
+        "v3/backend/app/api"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P2-T06",
+        "P5-T01"
+      ],
+      "estimated_effort": "4-6 days"
+    },
+    {
+      "id": "P5-T04",
+      "phase": "Phase 5",
+      "title": "Design secure mobile auth",
+      "description": "Design mobile-safe token/session handling, refresh behavior, and WebSocket auth approach.",
+      "dependent_modules_files": [
+        "v3/backend/app/modules/auth.py",
+        "v3/backend/app/modules/ws_auth.py",
+        "v3/frontend/src/services/api.js",
+        "v3/frontend/src/services/websocket.js"
+      ],
+      "priority": "High",
+      "status": "Done",
+      "dependencies": [
+        "P1-T01",
+        "P5-T01"
+      ],
+      "estimated_effort": "2-4 days"
+    },
+    {
+      "id": "P5-T05",
+      "phase": "Phase 5",
+      "title": "Extract platform-neutral frontend services",
+      "description": "Move reusable domain logic out of DOM-heavy components into services/state helpers suitable for mobile reuse.",
+      "dependent_modules_files": [
+        "v3/frontend/src/services",
+        "v3/frontend/src/utils",
+        "v3/frontend/src/components/ChatPanel.jsx",
+        "v3/frontend/src/components/RoleHubPanel.jsx"
+      ],
+      "priority": "Medium",
+      "status": "Done",
+      "dependencies": [
+        "P3-T05",
+        "P3-T06"
+      ],
+      "estimated_effort": "5-8 days"
+    },
+    {
+      "id": "P5-T06",
+      "phase": "Phase 5",
+      "title": "Document mobile screen and capability map",
+      "description": "Map web workspace features to mobile screens and define upload, PDF, offline, and notification strategy.",
+      "dependent_modules_files": [
+        "ai_tutor_control/mobile_readiness.md",
+        "ai_tutor_control/action_planning"
+      ],
+      "priority": "Medium",
+      "status": "Done",
+      "dependencies": [
+        "P5-T04",
+        "P5-T05"
+      ],
+      "estimated_effort": "2-3 days"
+    },
+    {
+      "id": "P6-T01",
+      "phase": "Phase 6",
+      "title": "Design job queue abstraction",
+      "description": "Define an interface and migration plan for moving indexing and long AI jobs out of in-process execution.",
+      "dependent_modules_files": [
+        "v3/backend/app/modules/file_management.py",
+        "v3/backend/app/modules/kb_sync.py",
+        "v3/backend/app/api/websocket.py"
+      ],
+      "priority": "Medium",
+      "status": "Done",
+      "dependencies": [
+        "P2-T05"
+      ],
+      "estimated_effort": "2-4 days"
+    },
+    {
+      "id": "P6-T02",
+      "phase": "Phase 6",
+      "title": "Design DB migration path",
+      "description": "Map SQLite schema ownership and define future migration path toward versioned migrations and Postgres.",
+      "dependent_modules_files": [
+        "v3/backend/app/modules/db.py",
+        "v3/backend/migrations"
+      ],
+      "priority": "Medium",
+      "status": "Done",
+      "dependencies": [
+        "P2-T05"
+      ],
+      "estimated_effort": "3-5 days"
+    },
+    {
+      "id": "P6-T03",
+      "phase": "Phase 6",
+      "title": "Design vector store abstraction",
+      "description": "Define repository/service boundary for FAISS operations and future external vector store options.",
+      "dependent_modules_files": [
+        "v3/backend/app/modules/faiss_store.py",
+        "v3/backend/app/modules/retrieval_orchestrator.py",
+        "v3/backend/app/modules/rag.py"
+      ],
+      "priority": "Medium",
+      "status": "Done",
+      "dependencies": [
+        "P2-T05"
+      ],
+      "estimated_effort": "3-5 days"
+    },
+    {
+      "id": "P6-T04",
+      "phase": "Phase 6",
+      "title": "Add request correlation and initial metrics hooks",
+      "description": "Introduce request ids and basic metric/log hooks for model latency, streaming, indexing, OCR, and quota events.",
+      "dependent_modules_files": [
+        "v3/backend/app/main.py",
+        "v3/backend/app/core/debug_logger.py",
+        "v3/backend/app/modules/model_manager.py",
+        "v3/backend/app/modules/file_management.py",
+        "v3/backend/app/modules/policy.py",
+        "v3/frontend/src/services/api.js"
+      ],
+      "priority": "Medium",
+      "status": "Done",
+      "dependencies": [
+        "P1-T03"
+      ],
+      "estimated_effort": "4-7 days"
+    },
+    {
+      "id": "P6-T05",
+      "phase": "Phase 6",
+      "title": "Create operations runbooks",
+      "description": "Document backup/restore, reindexing, production hardening, monitoring, and recovery procedures.",
+      "dependent_modules_files": [
+        "ai_tutor_control/documentation_plan.md",
+        "v3/data",
+        "v3/app/uploads",
+        "v3/backend/app/modules"
+      ],
+      "priority": "Medium",
+      "status": "Done",
+      "dependencies": [
+        "P6-T01",
+        "P6-T02",
+        "P6-T03",
+        "P6-T04"
+      ],
+      "estimated_effort": "2-4 days"
+    }
+  ]
+}

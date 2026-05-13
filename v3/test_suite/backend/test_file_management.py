@@ -6,6 +6,8 @@ File Management Tests
 - Indexing status tracking
 """
 
+import sqlite3
+
 import pytest
 from unittest.mock import MagicMock, patch, call
 from fastapi import HTTPException, UploadFile
@@ -22,6 +24,8 @@ from app.modules.file_management import (
     make_upload_content_ref,
     queue_reindex,
     recover_indexing_jobs,
+    delete_uploaded_file,
+    rename_uploaded_file,
     resolve_content_reference,
 )
 
@@ -77,6 +81,109 @@ class TestFileSHA256:
         
         assert isinstance(hash_val, str)
         assert len(hash_val) == 64
+
+
+def _create_upload_management_db(db_path):
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        CREATE TABLE uploaded_files (
+            id INTEGER PRIMARY KEY,
+            user_id TEXT,
+            class_name TEXT,
+            subject_name TEXT,
+            folder_name TEXT,
+            file_name TEXT,
+            display_name TEXT,
+            relative_path TEXT,
+            mime_type TEXT,
+            size_bytes INTEGER,
+            file_sha256 TEXT,
+            upload_status TEXT,
+            updated_at TEXT
+        )
+        """
+    )
+    cursor.execute("CREATE TABLE file_index_status (file_id INTEGER, indexed INTEGER, status_reason TEXT, message_id TEXT, updated_at TEXT)")
+    cursor.execute("CREATE TABLE chat_history (selected_content TEXT, session_content TEXT)")
+    cursor.execute("CREATE TABLE user_preferences (content_id TEXT)")
+    conn.commit()
+    conn.close()
+
+
+def _connect_upload_management_db(db_path):
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+class TestUploadedFileManagement:
+    def test_rename_uploaded_file_moves_file_and_updates_record(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "uploads.db"
+        _create_upload_management_db(db_path)
+        upload_dir = tmp_path / "uploads"
+        upload_dir.mkdir()
+        old_file = upload_dir / "Old-Name.pdf"
+        old_file.write_bytes(b"%PDF")
+
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            """
+            INSERT INTO uploaded_files
+            (id, user_id, class_name, subject_name, folder_name, file_name, display_name, relative_path, mime_type, size_bytes, file_sha256, upload_status)
+            VALUES (1, 'student', 'Class-10', 'Biology', 'Notes', 'Old-Name.pdf', 'Old-Name', 'uploads/Old-Name.pdf', 'application/pdf', 4, 'hash', 'INDEXED')
+            """
+        )
+        conn.commit()
+        conn.close()
+
+        monkeypatch.setattr("app.modules.file_management.BASE_DIR", str(tmp_path))
+        monkeypatch.setattr("app.modules.file_management.get_connection", lambda: _connect_upload_management_db(db_path))
+        result = rename_uploaded_file({"username": "student", "role": "student"}, 1, "New-Name")
+
+        assert result["status"] == "renamed"
+        assert not old_file.exists()
+        assert (upload_dir / "New-Name.pdf").exists()
+
+    def test_delete_uploaded_file_removes_records_and_clears_content_refs(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "uploads.db"
+        _create_upload_management_db(db_path)
+        upload_dir = tmp_path / "uploads"
+        upload_dir.mkdir()
+        uploaded_file = upload_dir / "Notes.pdf"
+        uploaded_file.write_bytes(b"%PDF")
+        content_id = make_upload_content_ref(2)
+
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            """
+            INSERT INTO uploaded_files
+            (id, user_id, class_name, subject_name, folder_name, file_name, display_name, relative_path, mime_type, size_bytes, file_sha256, upload_status)
+            VALUES (2, 'student', 'Class-10', 'Biology', 'Notes', 'Notes.pdf', 'Notes', 'uploads/Notes.pdf', 'application/pdf', 4, 'hash', 'INDEXED')
+            """
+        )
+        conn.execute("INSERT INTO file_index_status (file_id, indexed, status_reason, message_id) VALUES (2, 1, 'indexed', 'MSG-1000')")
+        conn.execute("INSERT INTO chat_history (selected_content, session_content) VALUES (?, ?)", (content_id, content_id))
+        conn.execute("INSERT INTO user_preferences (content_id) VALUES (?)", (content_id,))
+        conn.commit()
+        conn.close()
+
+        monkeypatch.setattr("app.modules.file_management.BASE_DIR", str(tmp_path))
+        monkeypatch.setattr("app.modules.file_management.get_connection", lambda: _connect_upload_management_db(db_path))
+        result = delete_uploaded_file({"username": "student", "role": "student"}, 2)
+
+        assert result["status"] == "deleted"
+        assert result["removed_file"] is True
+        assert not uploaded_file.exists()
+
+        conn = sqlite3.connect(db_path)
+        assert conn.execute("SELECT COUNT(*) FROM uploaded_files").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM file_index_status").fetchone()[0] == 0
+        assert tuple(conn.execute("SELECT selected_content, session_content FROM chat_history").fetchone()) == (None, None)
+        assert conn.execute("SELECT content_id FROM user_preferences").fetchone()[0] is None
+        conn.close()
 
 
 class TestSafeName:
@@ -402,18 +509,86 @@ class TestContentReferences:
 
 
 class TestIndexJobLifecycle:
+    @patch("app.modules.file_management.get_connection")
     @patch("app.modules.file_management._submit_index_job")
     @patch("app.modules.file_management._create_index_job")
     @patch("app.modules.file_management._load_files_for_scope")
-    def test_queue_reindex_uses_managed_submission(self, mock_load_files, mock_create_job, mock_submit_job):
+    def test_queue_reindex_uses_managed_submission(self, mock_load_files, mock_create_job, mock_submit_job, mock_conn):
         mock_load_files.return_value = [{"id": 1, "relative_path": "app/uploads/x.pdf"}]
         mock_create_job.return_value = 91
         mock_submit_job.return_value = True
+
+        cursor = MagicMock()
+        conn = MagicMock()
+        conn.cursor.return_value = cursor
+        mock_conn.return_value = conn
 
         result = queue_reindex({"username": "student", "role": "student"}, scope="file", file_id=1)
 
         assert result == {"job_id": 91, "queued_files": 1}
         mock_submit_job.assert_called_once_with(91, mock_load_files.return_value)
+        cursor.execute.assert_any_call(
+            """
+            UPDATE file_index_status
+            SET status_reason='queued', message_id='MSG-1302', updated_at=CURRENT_TIMESTAMP
+            WHERE file_id=?
+            """,
+            (1,),
+        )
+
+    @patch("app.modules.file_management._load_files_for_scope")
+    def test_queue_reindex_returns_empty_when_no_files(self, mock_load_files):
+        mock_load_files.return_value = []
+
+        result = queue_reindex({"username": "student", "role": "student"}, scope="changed")
+
+        assert result == {"job_id": None, "queued_files": 0}
+
+    def test_derive_processing_state_queued_for_uploaded_file(self):
+        from app.modules.file_management import _derive_processing_state
+
+        state = _derive_processing_state("UPLOADED", False, "queued")
+        assert state == "queued"
+
+    def test_derive_processing_state_failed_for_failed_file(self):
+        from app.modules.file_management import _derive_processing_state
+
+        state = _derive_processing_state("FAILED", False, "index_failed")
+        assert state == "failed"
+
+    @patch("app.modules.file_management.get_connection")
+    def test_get_index_status_reports_processing_state(self, mock_conn):
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            {
+                "id": 1,
+                "display_name": "Chapter 1",
+                "upload_status": "UPLOADED",
+                "indexed": 0,
+                "status_reason": "queued",
+                "message_id": "MSG-1302",
+                "updated_at": "2025-01-01T00:00:00Z",
+            }
+        ]
+        conn = MagicMock()
+        conn.cursor.return_value = cursor
+        mock_conn.return_value = conn
+
+        from app.modules.file_management import get_index_status
+        result = get_index_status({"username": "student", "role": "student"}, file_id=1)
+
+        assert result == [
+            {
+                "file_id": 1,
+                "display_name": "Chapter 1",
+                "upload_status": "UPLOADED",
+                "indexed": False,
+                "status_reason": "queued",
+                "processing_state": "queued",
+                "message_id": "MSG-1302",
+                "updated_at": "2025-01-01T00:00:00Z",
+            }
+        ]
 
     @patch("app.modules.file_management._submit_index_job")
     @patch("app.modules.file_management._load_files_for_scope")

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timedelta, UTC
 from typing import Dict, List, Optional
 
 from fastapi import HTTPException
 
 from .db import get_connection
+
+SUBSCRIPTION_ACTIVATION_MODE = "manual"
 
 
 def _normalize_promo_code(code: Optional[str]) -> str:
@@ -146,11 +149,14 @@ def quote_subscription(class_names: List[str], promo_code: Optional[str] = None)
 
     total = max(0, subtotal - discount)
     return {
+        "quote_id": f"Q-{uuid.uuid4().hex[:8]}",
+        "amount": float(total / 100.0),
+        "currency": currency,
+        "valid_until": (datetime.now(UTC) + timedelta(minutes=30)).isoformat(),
         "classes": line_items,
         "subtotal_cents": subtotal,
         "discount_cents": discount,
         "total_cents": total,
-        "currency": currency,
         "promo": promo,
         "billing_period": "annual",
     }
@@ -202,6 +208,7 @@ def activate_subscription(
     class_names: List[str],
     promo_code: Optional[str] = None,
     auto_renew: bool = False,
+    payment_reference: Optional[str] = None,
 ) -> Dict[str, object]:
     quote = quote_subscription(class_names, promo_code=promo_code)
     activated_at = datetime.now(UTC)
@@ -269,7 +276,10 @@ def activate_subscription(
 
     return {
         **quote,
+        "status": "active",
         "auto_renew": bool(auto_renew),
+        "payment_reference": payment_reference,
+        "activation_mode": SUBSCRIPTION_ACTIVATION_MODE,
         "activated_at": activated_at.isoformat(),
         "expires_at": expires_at.isoformat(),
         "active_classes": list_active_user_classes(user_id),

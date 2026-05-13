@@ -499,10 +499,12 @@ class TestPreferencesRoute:
         body = resp.json()
         assert body["reminder_settings"]["enabled"] is False
         assert body["reminder_settings"]["frequency"] == "important-only"
+        assert body["reminder_settings"]["delivery_scope"] == "local-only"
 
         stored = client.get("/preferences", headers=_auth(token))
         assert stored.status_code == 200
         assert stored.json()["reminder_settings"]["muted_ids"] == ["assessment-reminder"]
+        assert stored.json()["reminder_settings"]["delivery_scope"] == "local-only"
 
 
 class TestOcrStatusRoute:
