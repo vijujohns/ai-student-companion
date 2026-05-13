@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { FiLink, FiRefreshCw, FiUsers } from "react-icons/fi";
+import { FiLink, FiRefreshCw, FiTrash2, FiUsers } from "react-icons/fi";
 import { apiFetch, parseApiError } from "../services/api";
 
 function buildRecentActivityAction(item) {
