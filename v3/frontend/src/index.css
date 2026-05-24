@@ -27,6 +27,7 @@
   --ui-space-scale: 1;
   --ui-font-scale: 1;
   --workspace-sidebar-offset: 326px;
+  --workspace-sidebar-offset: 0px;
   --font-sans: "IBM Plex Sans", "Segoe UI Variable", "Inter", sans-serif;
   --font-mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
 }
@@ -269,10 +270,39 @@ code {
   max-width: 1440px;
   margin: 0 auto calc(12px * var(--ui-space-scale));
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: calc(10px * var(--ui-space-scale));
   flex-shrink: 0;
+}
+
+.app-shell__workspace-menu-trigger {
+  position: relative;
+  z-index: 50;
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  margin-right: auto;
+  order: -1;
+}
+
+.app-shell__workspace-menu-trigger:hover {
+  background: rgba(25,195,156,0.08);
+  border-color: rgba(25,195,156,0.2);
+}
+
+.app-shell__workspace-menu-trigger svg {
+  width: 20px;
+  height: 20px;
 }
 
 .app-shell__content--workspace .app-shell__header {
@@ -297,7 +327,7 @@ code {
   gap: calc(14px * var(--ui-space-scale));
   flex: 1 1 0;
   min-width: 0;
-  align-self: flex-start;
+  align-self: normal;
 }
 
 .app-shell__brand-copy {

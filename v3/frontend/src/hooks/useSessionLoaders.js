@@ -12,6 +12,7 @@ export function useSessionLoaders({ apiFetch = defaultApiFetch } = {}) {
   const [lessonSessions, setLessonSessions] = useState([]);
   const [quizSessions, setQuizSessions] = useState([]);
   const [flashcardSessions, setFlashcardSessions] = useState([]);
+  const [notesSessions, setNotesSessions] = useState([]);
 
   const loadSessions = useCallback(async () => {
     try {
@@ -57,6 +58,17 @@ export function useSessionLoaders({ apiFetch = defaultApiFetch } = {}) {
     }
   }, [apiFetch]);
 
+  const loadNotesSessions = useCallback(async () => {
+    try {
+      const res = await apiFetch("/notes/sessions");
+      if (!res.ok) return;
+      const data = await res.json();
+      setNotesSessions(normalizeSessionList(data));
+    } catch (err) {
+      console.error("❌ Failed to load notes sessions:", err);
+    }
+  }, [apiFetch]);
+
   return {
     sessions,
     setSessions,
@@ -66,9 +78,12 @@ export function useSessionLoaders({ apiFetch = defaultApiFetch } = {}) {
     setQuizSessions,
     flashcardSessions,
     setFlashcardSessions,
+    notesSessions,
+    setNotesSessions,
     loadSessions,
     loadLessonSessions,
     loadQuizSessions,
     loadFlashcardSessions,
+    loadNotesSessions,
   };
 }

@@ -1,5 +1,18 @@
+.message-input-vars {
+  /* local variables to keep the sheet compact and consistent */
+  --mi-border: rgba(255, 255, 255, 0.08);
+  --mi-bg: rgba(255, 255, 255, 0.06);
+  --mi-bg-2: rgba(255, 255, 255, 0.04);
+  --mi-muted: rgba(248, 250, 252, 0.5);
+  --accent-green: rgba(34, 197, 94, 0.18);
+  --accent-green-strong: rgba(34, 197, 94, 0.45);
+  --accent-green-hover: rgba(34, 197, 94, 0.25);
+  --accent-red: rgba(239, 68, 68, 0.12);
+  --accent-red-strong: rgba(239, 68, 68, 0.2);
+}
+
 .message-input-container {
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--mi-border);
   padding: 0.95rem 1rem 1rem;
 }
 
@@ -20,14 +33,15 @@
   min-height: 2.5rem;
   max-height: 2.5rem;
   padding: 0.45rem 0.85rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--mi-border);
   border-radius: 0.75rem;
-  background-color: rgba(255, 255, 255, 0.04);
+  background-color: var(--mi-bg-2);
   color: #f8fafc;
   font-size: 0.95rem;
   line-height: 1.4;
   resize: none;
   font-family: inherit;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .message-textarea::placeholder {
@@ -47,115 +61,79 @@
 
 .input-actions {
   display: flex;
-  flex-direction: row;
   gap: 0.5rem;
 }
 
-.message-action-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.5rem;
-  height: 2.5rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 0.75rem;
-  background-color: rgba(255, 255, 255, 0.06);
-  color: #f8fafc;
-  cursor: pointer;
-  font-size: 1rem;
-  transition: background 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
-}
-
-.message-action-button:hover:not(:disabled) {
-  background-color: rgba(255, 255, 255, 0.12);
-  transform: translateY(-1px);
-}
-
-.file-button:disabled,
-.send-button:disabled {
-  border-color: rgba(255, 255, 255, 0.05);
-  color: rgba(248, 250, 252, 0.5);
-  cursor: not-allowed;
-}
-
-.send-button {
-  width: 2.5rem;
-  height: 2.5rem;
-}
-
-.stop-button {
-  width: 2.5rem;
-  height: 2.5rem;
-  background-color: rgba(239, 68, 68, 0.12);
-  border-color: rgba(248, 113, 113, 0.35);
-  color: #fca5a5;
-}
-
-.stop-button:hover:not(:disabled) {
-  background-color: rgba(239, 68, 68, 0.2);
-}
-
-.send-button.send-button--ready {
-  background-color: rgba(34, 197, 94, 0.18);
-  border-color: rgba(34, 197, 94, 0.45);
-  color: #dcfce7;
-}
-
-.send-button.send-button--ready:hover:not(:disabled) {
-  background-color: rgba(34, 197, 94, 0.25);
-}
-
-.send-button {
-  border-color: rgba(255, 255, 255, 0.08);
-  color: #f8fafc;
-}
-
-.send-button:hover:not(:disabled) {
-  background-color: rgba(255, 255, 255, 0.08);
-}
-
-.send-button:disabled {
-  border-color: rgba(255, 255, 255, 0.05);
-  color: rgba(248, 250, 252, 0.5);
-  cursor: not-allowed;
-  background-color: rgba(255, 255, 255, 0.04);
-  border-color: rgba(255, 255, 255, 0.05);
-}
-
+.message-action-button,
 .voice-control {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 2.5rem;
   height: 2.5rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 0.5rem;
-  background-color: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--mi-border);
+  border-radius: 0.75rem;
+  background-color: var(--mi-bg);
   color: #f8fafc;
   cursor: pointer;
   font-size: 1rem;
   transition: background 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
 }
 
+.message-action-button:hover:not(:disabled),
 .voice-control:hover:not(:disabled) {
   background-color: rgba(255, 255, 255, 0.12);
   transform: translateY(-1px);
 }
 
+.message-action-button:disabled,
+.voice-control:disabled {
+  border-color: rgba(255, 255, 255, 0.05);
+  color: var(--mi-muted);
+  cursor: not-allowed;
+}
+
+.new-chat-button,
+.send-button {
+  border-color: var(--mi-border);
+  color: #f8fafc;
+}
+
+.send-button:disabled {
+  background-color: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.05);
+}
+
+.send-button.send-button--ready {
+  background-color: var(--accent-green);
+  border-color: var(--accent-green-strong);
+  color: #dcfce7;
+}
+
+.send-button.send-button--ready:hover:not(:disabled) {
+  background-color: var(--accent-green-hover);
+}
+
+.stop-button {
+  background-color: var(--accent-red);
+  border-color: rgba(248, 113, 113, 0.35);
+  color: #fca5a5;
+}
+
+.stop-button:hover:not(:disabled) {
+  background-color: var(--accent-red-strong);
+}
+
 .voice-control--listening,
-.message-action-button.active,
-.icon-button.active,
-.header-button.active {
-  background-color: rgba(34, 197, 94, 0.18);
-  border-color: rgba(34, 197, 94, 0.45);
+.message-action-button.active {
+  background-color: var(--accent-green);
+  border-color: var(--accent-green-strong);
   color: #dcfce7;
 }
 
 .voice-control--listening:hover:not(:disabled),
-.message-action-button.active:hover:not(:disabled),
-.icon-button.active:hover:not(:disabled),
-.header-button.active:hover:not(:disabled) {
-  background-color: rgba(34, 197, 94, 0.25);
+.message-action-button.active:hover:not(:disabled) {
+  background-color: var(--accent-green-hover);
 }
 
 @media (max-width: 700px) {
@@ -168,7 +146,6 @@
   }
 
   .input-actions {
-    flex-direction: row;
     justify-content: flex-end;
     width: 100%;
   }

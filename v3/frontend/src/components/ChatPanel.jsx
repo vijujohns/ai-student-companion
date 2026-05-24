@@ -13,8 +13,9 @@ import {
   FiFileText,
   FiFolder,
   FiLayers,
+  FiChevronDown,
+  FiChevronRight,
   FiMaximize2,
-  FiMenu,
   FiMessageSquare,
   FiMinimize2,
   FiPlus,
@@ -659,7 +660,7 @@ function buildFriendlyProcessingState(statusItem) {
   };
 }
 
-export default function ChatPanel({ initialActiveTab = null, externalTabRequest = null }) {
+export default function ChatPanel({ initialActiveTab = null, externalTabRequest = null, sidebarPopupOpen = false, setSidebarPopupOpen = () => {} }) {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState([]);
   const [currentStream, setCurrentStream] = useState("");
@@ -697,6 +698,95 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
   const [uploadNotice, setUploadNotice] = useState(null);
   const [pdfBlobUrl, setPdfBlobUrl] = useState(null);
   const [drawerOpen, setDrawerOpen] = useState(true);
+  const [sidebarCompact, setSidebarCompact] = useState(() => {
+    try {
+      return localStorage.getItem("sidebarCompact") === "1";
+    } catch (e) {
+      return false;
+    }
+  });
+
+  const [collapsedSections, setCollapsedSections] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("collapsedSections") || "{}");
+    } catch (e) {
+      return {};
+    }
+  });
+
+  const toggleCompact = useCallback(() => {
+    setSidebarCompact((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("sidebarCompact", next ? "1" : "0"); } catch (e) {}
+      return next;
+    });
+  }, []);
+
+  const toggleSection = useCallback((key) => {
+    setCollapsedSections((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      try { localStorage.setItem("collapsedSections", JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
+  }, []);
+
+  const [sessionsPage, setSessionsPage] = useState(0);
+  const [popupSessionsTab, setPopupSessionsTab] = useState('chat');
+  const sessionsPageSize = 9;
+  const popupRef = useRef(null);
+
+  const toggleSidebarPopup = useCallback(() => {
+    setSidebarPopupOpen(true);
+    setSessionsPage(0);
+  }, []);
+
+  const closeSidebarPopup = useCallback(() => {
+    setSidebarPopupOpen(false);
+    setSessionsPage(0);
+  }, []);
+
+  const handlePopupMouseEnter = useCallback(() => {
+    setSidebarPopupOpen(true);
+  }, []);
+
+  const handlePopupMouseLeave = useCallback(() => {
+    setSidebarPopupOpen(false);
+  }, []);
+
+  const goPrevSessionsPage = useCallback(() => setSessionsPage((p) => Math.max(0, p - 1)), []);
+  const goNextSessionsPage = useCallback(() => setSessionsPage((p) => p + 1), []);
+
+  // Handle tab change - reset page and update tab
+  const handlePopupTabChange = useCallback((tabId) => {
+    setPopupSessionsTab(tabId);
+    setSessionsPage(0);
+  }, []);
+
+  // Close popup on Escape key or click outside
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape" && sidebarPopupOpen) {
+        closeSidebarPopup();
+      }
+    };
+
+    const handleClickOutside = (event) => {
+      if (sidebarPopupOpen && popupRef.current && !popupRef.current.contains(event.target)) {
+        closeSidebarPopup();
+      }
+    };
+
+    if (sidebarPopupOpen) {
+      document.addEventListener("keydown", handleKeyDown);
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [sidebarPopupOpen, closeSidebarPopup]);
+
   const [adminRunning, setAdminRunning] = useState(false);
   const [adminMessage, setAdminMessage] = useState("");
   const [adminStatus, setAdminStatus] = useState(null);
@@ -704,6 +794,14 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
   const [adminJobId, setAdminJobId] = useState(null);
   const initialWorkspaceTab = initialActiveTab || (userRole === "admin" ? "admin" : userRole === "teacher" || userRole === "parent" ? "roles" : "chat");
   const [activeTab, setActiveTab] = useState(initialWorkspaceTab);
+  
+  // Initialize popup tab when popup opens to match active workspace tab
+  useEffect(() => {
+    if (sidebarPopupOpen && ['chat', 'lesson', 'quiz', 'flashcards', 'notes'].includes(activeTab)) {
+      setPopupSessionsTab(activeTab);
+    }
+  }, [sidebarPopupOpen, activeTab]);
+
   const [lessonResultReady, setLessonResultReady] = useState(false);
   const [quizResultReady, setQuizResultReady] = useState(false);
   const [flashcardResultReady, setFlashcardResultReady] = useState(false);
@@ -761,10 +859,13 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
     setQuizSessions,
     flashcardSessions,
     setFlashcardSessions,
+    notesSessions,
+    setNotesSessions,
     loadSessions,
     loadLessonSessions,
     loadQuizSessions,
     loadFlashcardSessions,
+    loadNotesSessions,
   } = useSessionLoaders();
 
   const chatPanelRef = useRef(null);
@@ -1180,6 +1281,33 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
     flashcardSessions,
     currentContextLabel,
     flashcardSessionId
+  );
+
+  const filteredNotesSessions = filterSessionsByContext(
+    notesSessions,
+    currentContextLabel,
+    null
+  );
+
+  // Helper to get current sessions array based on selected tab
+  const getSessionsForTab = (tab) => {
+    switch (tab) {
+      case 'lesson':
+        return filteredLessonSessions || [];
+      case 'quiz':
+        return filteredQuizSessions || [];
+      case 'flashcards':
+        return filteredFlashcardSessions || [];
+      case 'notes':
+        return filteredNotesSessions || [];
+      default:
+        return sessions || [];
+    }
+  };
+
+  const currentTabSessions = useMemo(
+    () => getSessionsForTab(popupSessionsTab),
+    [popupSessionsTab, filteredLessonSessions, filteredQuizSessions, filteredFlashcardSessions, filteredNotesSessions, sessions]
   );
 
   const { loadClasses, loadSubjects, loadFolders, loadContents } = useKnowledgeBaseLoader({
@@ -1861,9 +1989,10 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
     loadLessonSessions();
     loadQuizSessions();
     loadFlashcardSessions();
+    loadNotesSessions();
     loadClasses();
     loadPlanSummary();
-  }, [loadClasses, loadFlashcardSessions, loadLessonSessions, loadPlanSummary, loadQuizSessions, loadSessions]);
+  }, [loadClasses, loadFlashcardSessions, loadLessonSessions, loadPlanSummary, loadQuizSessions, loadSessions, loadNotesSessions]);
 
   useEffect(() => {
     if (classes.length === 0) {
@@ -2131,404 +2260,92 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
   };
 
   return (
-    <div className={`workspace-shell ${drawerOpen ? "" : "workspace-shell--sidebar-collapsed"}`}>
-      <aside className={`workspace-sidebar ${drawerOpen ? "" : "workspace-sidebar--collapsed"}`}>
-        <div className="workspace-sidebar__header">
-          <button
-            type="button"
-            className="icon-button icon-button--ghost workspace-sidebar__toggle"
-            onClick={() => setDrawerOpen((prev) => !prev)}
-            title={drawerOpen ? "Collapse sidebar" : "Expand sidebar"}
-          >
-            <FiMenu />
-          </button>
-          <div className="workspace-sidebar__brand">
-            {drawerOpen ? <span>{workspaceBrandSummary}</span> : null}
+    <div className="workspace-shell">
+      <div
+        className="workspace-sidebar-popup-wrapper"
+        ref={popupRef}
+        onMouseEnter={handlePopupMouseEnter}
+        onMouseLeave={handlePopupMouseLeave}
+      >
+        {sidebarPopupOpen && (
+          <div className="workspace-sidebar-popup" role="dialog" aria-modal="true">
+            <div className="workspace-sidebar-popup__inner">
+            <div className="workspace-sidebar-popup__header">
+              <strong>Workspace</strong>
+              <div>
+                <button type="button" className="icon-button" onClick={() => setSidebarPopupOpen(false)} aria-label="Close">
+                  <FiX />
+                </button>
+              </div>
+            </div>
+
+            <div className="popup-section popup-tiles">
+              <h4>Available for you</h4>
+              <div className="tiles-grid">
+                {workspaceNavSections.flatMap(s => s.tabs).map((tab) => {
+                  const Icon = tab.icon;
+                  return (
+                    <button key={tab.id} type="button" className="tile-card" onClick={() => { handleWorkspaceTabSelect(tab.id); setSidebarPopupOpen(false); }}>
+                      <div className="tile-icon"><Icon /></div>
+                      <div className="tile-label">{tab.label}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="popup-section popup-sessions">
+              <div className="popup-tabs">
+                {['chat', 'notes', 'lesson', 'quiz', 'flashcards'].map((tabId) => {
+                  const tabLabels = {
+                    chat: 'Chat',
+                    notes: 'Notes',
+                    lesson: 'Lesson',
+                    quiz: 'Quiz',
+                    flashcards: 'Flashcards'
+                  };
+                  return (
+                    <button
+                      key={tabId}
+                      type="button"
+                      className={`popup-tab ${popupSessionsTab === tabId ? 'active' : ''}`}
+                      onClick={() => handlePopupTabChange(tabId)}
+                    >
+                      {tabLabels[tabId]}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className={`sessions-grid`}>
+                {(() => {
+                  const start = sessionsPage * sessionsPageSize;
+                  const paged = currentTabSessions.slice(start, start + sessionsPageSize);
+                  return paged.map((s) => (
+                    <div key={s.id} className={`session-tile ${s.id === sessionId ? 'active' : ''}`}>
+                      <button type="button" className="session-tile__btn" onClick={() => { switchSession(s); setSidebarPopupOpen(false); }}>
+                        <FiMessageSquare />
+                        <div className="session-tile__title">{s.title || 'New Session'}</div>
+                      </button>
+                    </div>
+                  ));
+                })()}
+              </div>
+              {currentTabSessions.length > sessionsPageSize && (
+                <div className="popup-more pager">
+                  {sessionsPage > 0 && (
+                    <button type="button" className="link-button" onClick={goPrevSessionsPage}>Prev</button>
+                  )}
+                  <span className="pager-info">Page {sessionsPage + 1} of {Math.max(1, Math.ceil(currentTabSessions.length / sessionsPageSize))}</span>
+                  {(sessionsPage + 1) * sessionsPageSize < currentTabSessions.length && (
+                    <button type="button" className="link-button" onClick={goNextSessionsPage}>Next</button>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
-
-        {drawerOpen ? (
-          <>
-            {activeTab === "chat" && (
-              <div className="workspace-sidebar__actions">
-                <button
-                  type="button"
-                  className="primary-button primary-button--block"
-                  onClick={handleNewChat}
-                >
-                  <FiPlus />
-                  <span>New Chat Session</span>
-                </button>
-              </div>
-            )}
-
-            <div className="workspace-sidebar__section">
-              <div className="workspace-sidebar__section-title">
-                <FiLayers />
-                <span>Available for you</span>
-              </div>
-              <div style={{ display: "grid", gap: 12 }}>
-                {workspaceNavSections.map((section) => (
-                  <div key={section.key}>
-                    {workspaceNavSections.length > 1 ? (
-                      <div className="sidebar-note" style={{ marginBottom: 8 }}>
-                        {section.title}
-                      </div>
-                    ) : null}
-                    <div className="sidebar-tabs">
-                      {section.tabs.map((tab) => {
-                        const Icon = tab.icon;
-                        const showReadyDot = shouldShowWorkspaceReadyDot(tab.id);
-                        return (
-                          <button
-                            key={tab.id}
-                            className={activeTab === tab.id ? "active" : ""}
-                            onClick={() => handleWorkspaceTabSelect(tab.id)}
-                            style={showReadyDot ? { position: "relative" } : undefined}
-                          >
-                            <Icon />
-                            <span>{tab.label}</span>
-                            {showReadyDot && (
-                              <span
-                                style={{
-                                  position: "absolute",
-                                  top: "-4px",
-                                  right: "-4px",
-                                  width: "8px",
-                                  height: "8px",
-                                  borderRadius: "50%",
-                                  background: "#10a37f",
-                                  boxShadow: "0 0 3px rgba(16, 163, 127, 0.8)",
-                                }}
-                              />
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {activeTab === "chat" && (
-              <>
-                <div className="workspace-sidebar__section">
-                  <div className="workspace-sidebar__section-title">
-                    <FiMessageSquare />
-                    <span>Chat Sessions</span>
-                  </div>
-
-                  <button
-                    type="button"
-                    className="secondary-button secondary-button--block"
-                    onClick={loadSessions}
-                  >
-                    <FiRefreshCw />
-                    <span>Refresh Sessions</span>
-                  </button>
-
-                  <div className="session-list">
-                    {sessions.length === 0 && (
-                      <div className="sidebar-note">Your saved chat sessions will appear here.</div>
-                    )}
-
-                    {sessions.map((session) => (
-                      <div
-                        key={session.id}
-                        className={`session-item ${session.id === sessionId ? "active" : ""}`}
-                      >
-                        <button
-                          type="button"
-                          className="session-title"
-                          onClick={() => switchSession(session)}
-                          title={session.title || "New Chat"}
-                        >
-                          <FiMessageSquare className="session-icon" size={14} />
-                          <span className="session-text">{session.title || "New Chat"}</span>
-                        </button>
-                        <div className="session-actions">
-                          <button type="button" className="icon-button icon-button--ghost" onClick={() => renameSession(session)}>
-                            <FiEdit />
-                          </button>
-                          <button type="button" className="icon-button icon-button--ghost" onClick={() => deleteSession(session)}>
-                            <FiTrash2 />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-              </>
-            )}
-
-            {activeTab === "lesson" && (
-              <div className="workspace-sidebar__section">
-                <div className="workspace-sidebar__section-title">
-                  <FiBookOpen />
-                  <span>Saved Lesson Plans</span>
-                </div>
-
-                <button
-                  type="button"
-                  className="secondary-button secondary-button--block"
-                  onClick={loadLessonSessions}
-                >
-                  <FiRefreshCw />
-                  <span>Refresh Lesson Plans</span>
-                </button>
-
-                <div className="session-list">
-                  {filteredLessonSessions.length === 0 && (
-                    <div className="sidebar-note">
-                      {currentContextLabel
-                        ? "No saved lesson plans for selected content."
-                        : "Your saved lesson plans will appear here."}
-                    </div>
-                  )}
-
-                  {filteredLessonSessions.map((item) => (
-                    <div
-                      key={item.id}
-                      className={`session-item ${item.id === lessonSessionId ? "active" : ""}`}
-                    >
-                      <button
-                        type="button"
-                        className="session-title"
-                        onClick={() => {
-                          persistLessonSession(item.id);
-                          setActiveTab("lesson");
-                          setLessonResultReady(false);
-                        }}
-                        title={item.title || "Lesson Session"}
-                      >
-                        <FiBookOpen className="session-icon" size={14} />
-                        <span className="session-text">{item.title || "Lesson Session"}</span>
-                      </button>
-                      <div className="session-actions">
-                        <button
-                          type="button"
-                          className="icon-button icon-button--ghost"
-                          onClick={() => renameLessonSession(item)}
-                        >
-                          <FiEdit />
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-button icon-button--ghost"
-                          onClick={() => deleteLessonSession(item)}
-                        >
-                          <FiTrash2 />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {activeTab === "quiz" && (
-              <div className="workspace-sidebar__section">
-                <div className="workspace-sidebar__section-title">
-                  <FiClipboard />
-                  <span>Saved Quizzes</span>
-                </div>
-
-                <button
-                  type="button"
-                  className="secondary-button secondary-button--block"
-                  onClick={loadQuizSessions}
-                >
-                  <FiRefreshCw />
-                  <span>Refresh Quizzes</span>
-                </button>
-
-                <div className="session-list">
-                  {filteredQuizSessions.length === 0 && (
-                    <div className="sidebar-note">
-                      {currentContextLabel
-                        ? "No saved quizzes for selected content."
-                        : "Your saved quiz sessions will appear here."}
-                    </div>
-                  )}
-
-                  {filteredQuizSessions.map((item) => (
-                    <div key={item.id} className={`session-item ${item.id === quizSessionId ? "active" : ""}`}>
-                      <button
-                        type="button"
-                        className="session-title"
-                        onClick={() => {
-                          persistQuizSession(item.id);
-                          setActiveTab("quiz");
-                          setQuizResultReady(false);
-                        }}
-                        title={item.title || "Quiz Session"}
-                      >
-                        <FiClipboard className="session-icon" size={14} />
-                        <span className="session-text">{item.title || "Quiz Session"}</span>
-                      </button>
-                      <div className="session-actions">
-                        <button type="button" className="icon-button icon-button--ghost" onClick={() => renameQuizSession(item)}>
-                          <FiEdit />
-                        </button>
-                        <button type="button" className="icon-button icon-button--ghost" onClick={() => deleteQuizSession(item)}>
-                          <FiTrash2 />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {activeTab === "flashcards" && (
-              <div className="workspace-sidebar__section">
-                <div className="workspace-sidebar__section-title">
-                  <FiLayers />
-                  <span>Saved Cards</span>
-                </div>
-
-                <button
-                  type="button"
-                  className="secondary-button secondary-button--block"
-                  onClick={loadFlashcardSessions}
-                >
-                  <FiRefreshCw />
-                  <span>Refresh Cards</span>
-                </button>
-
-                <div className="session-list">
-                  {filteredFlashcardSessions.length === 0 && (
-                    <div className="sidebar-note">
-                      {currentContextLabel
-                        ? "No saved cards for selected content."
-                        : "Your saved card sessions will appear here."}
-                    </div>
-                  )}
-
-                  {filteredFlashcardSessions.map((item) => (
-                    <div
-                      key={item.id}
-                      className={`session-item ${item.id === flashcardSessionId ? "active" : ""}`}
-                    >
-                      <button
-                        type="button"
-                        className="session-title"
-                        onClick={() => {
-                          persistFlashcardSession(item.id);
-                          setActiveTab("flashcards");
-                          setFlashcardResultReady(false);
-                        }}
-                        title={item.title || "Cards Session"}
-                      >
-                        <FiLayers className="session-icon" size={14} />
-                        <span className="session-text">{item.title || "Cards Session"}</span>
-                      </button>
-                      <div className="session-actions">
-                        <button
-                          type="button"
-                          className="icon-button icon-button--ghost"
-                          onClick={() => renameFlashcardSession(item)}
-                        >
-                          <FiEdit />
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-button icon-button--ghost"
-                          onClick={() => deleteFlashcardSession(item)}
-                        >
-                          <FiTrash2 />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {activeTab === "notes" && (
-              <NotesSidebarSection 
-                isActive={activeTab === "notes"} 
-                onNoteSelected={(note) => {
-                  if (note?.selected_content) {
-                    setSelectedContent(note.selected_content);
-                  }
-                }}
-              />
-            )}
-          </>
-        ) : (
-          <>
-          <div className="workspace-sidebar__compact-actions">
-            <div className="workspace-sidebar__compact-group workspace-sidebar__compact-group--top">
-              {activeTab === "chat" && (
-                <button
-                  type="button"
-                  className="icon-button"
-                  onClick={handleNewChat}
-                  title="New chat session (Ctrl+Shift+N)"
-                  aria-label="New chat session (Ctrl+Shift+N)"
-                >
-                  <FiPlus />
-                </button>
-              )}
-            </div>
-
-            <div className="workspace-sidebar__compact-group workspace-sidebar__compact-group--modes">
-              {primaryWorkspaceSection.tabs.map((tab) => {
-                const Icon = tab.icon;
-                const showReadyDot = shouldShowWorkspaceReadyDot(tab.id);
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    className={`icon-button ${activeTab === tab.id ? "active" : ""}`}
-                    onClick={() => handleWorkspaceTabSelect(tab.id)}
-                    title={tab.shortLabel}
-                    aria-label={tab.shortLabel}
-                  >
-                    <Icon />
-                    {showReadyDot && <span className="compact-ready-dot" aria-hidden="true" />}
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="workspace-sidebar__compact-group workspace-sidebar__compact-group--bottom">
-              {activeTab === "chat" && (
-                <button
-                  type="button"
-                  className="icon-button"
-                  onClick={loadSessions}
-                  title="Refresh sessions"
-                  aria-label="Refresh sessions"
-                >
-                  <FiRefreshCw />
-                </button>
-              )}
-              {compactSecondaryTabs.map((tab) => {
-                const Icon = tab.icon;
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    className={`icon-button ${activeTab === tab.id ? "active" : ""}`}
-                    onClick={() => handleWorkspaceTabSelect(tab.id)}
-                    title={tab.shortLabel}
-                    aria-label={tab.shortLabel}
-                  >
-                    <Icon />
-                  </button>
-                );
-              })}
-            </div>
-
-          </div>
-        </>
-        )}
-      </aside>
-
+      )}
+      </div>
       <main className="workspace-panel">
 
         <div className="workspace-topbar">
@@ -2546,12 +2363,6 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
               <span className="status-pill status-pill--plan" title={planUsageSummary}>
                 <FiZap />
                 <span>{planUsageSummary}</span>
-              </span>
-            )}
-            {selectedContent && (
-              <span className="status-pill status-pill--accent">
-                <FiFileText />
-                <span>Content linked</span>
               </span>
             )}
           </div>

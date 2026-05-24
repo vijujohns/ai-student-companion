@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 export function useViewerLayout({ hasViewerContent }) {
   const [isViewerVisible, setIsViewerVisible] = useState(localStorage.getItem("viewerVisible") !== "false");
   const [viewerWidth, setViewerWidth] = useState(
-    Number(localStorage.getItem("viewerWidth")) || Number(localStorage.getItem("pdfWidth")) || 52
+    Number(localStorage.getItem("viewerWidth")) || Number(localStorage.getItem("pdfWidth")) || 35
   );
   const [isViewerMaximized, setIsViewerMaximized] = useState(localStorage.getItem("viewerMaximized") === "true");
   const [isDraggingViewer, setIsDraggingViewer] = useState(false);
@@ -37,8 +37,7 @@ export function useViewerLayout({ hasViewerContent }) {
     }
 
     setIsViewerMaximized(false);
-        viewerWidth,
-    setViewerWidth(previousViewerWidthRef.current || 52);
+    setViewerWidth(previousViewerWidthRef.current || 35);
   }, [hasViewerContent, isViewerMaximized, viewerWidth]);
 
   const updateViewerWidthFromPointer = useCallback((clientX) => {

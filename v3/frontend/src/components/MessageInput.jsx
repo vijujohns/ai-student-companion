@@ -58,7 +58,7 @@ const MessageInput = ({
   const canSend = !isDisabled && message.trim().length > 0;
 
   return (
-    <div className="message-input-container">
+    <div className="message-input-vars message-input-container">
       <form onSubmit={handleSubmit} className="message-input-form">
         <div className="input-group">
           <button

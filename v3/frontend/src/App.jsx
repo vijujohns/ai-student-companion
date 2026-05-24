@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { FiArrowRight, FiBookOpen, FiCreditCard, FiDownload, FiLogOut, FiMoreVertical, FiUser, FiWifi, FiWifiOff } from "react-icons/fi";
+import { FiArrowRight, FiBookOpen, FiCreditCard, FiDownload, FiLogOut, FiMenu, FiMoreVertical, FiUser, FiWifi, FiWifiOff } from "react-icons/fi";
 import { GiBrain } from "react-icons/gi";
 import ChatPanel from "./components/ChatPanel";
 import Login from "./components/Login";
@@ -28,6 +28,7 @@ function App() {
   const [backendStatusText, setBackendStatusText] = useState("Checking backend");
   const [headerAccountMenuOpen, setHeaderAccountMenuOpen] = useState(false);
   const [externalTabRequest, setExternalTabRequest] = useState(null);
+  const [sidebarPopupOpen, setSidebarPopupOpen] = useState(false);
   const accountMenuRef = useRef(null);
 
   // Workspace navigation state management
@@ -241,6 +242,17 @@ function App() {
       <div className="app-shell__backdrop" />
       <div className={`app-shell__content ${isLoggedIn ? "app-shell__content--workspace" : ""}`}>
         <header className="app-shell__header" role="banner">
+          {isLoggedIn && (
+            <button
+              type="button"
+              className="app-shell__workspace-menu-trigger"
+              onClick={() => setSidebarPopupOpen(!sidebarPopupOpen)}
+              title="Open workspace menu"
+              aria-label="Open workspace menu"
+            >
+              <FiMenu />
+            </button>
+          )}
           <div className="app-shell__brand">
             <span className="app-shell__brand-mark">
               <GiBrain />
@@ -395,7 +407,7 @@ function App() {
             <Login onLogin={handleLogin} sessionExpired={sessionExpired} />
           ) : null}
           {isLoggedIn ? (
-            <ChatPanel externalTabRequest={externalTabRequest} workspaceNavigation={workspaceNavigation} />
+            <ChatPanel externalTabRequest={externalTabRequest} workspaceNavigation={workspaceNavigation} sidebarPopupOpen={sidebarPopupOpen} setSidebarPopupOpen={setSidebarPopupOpen} />
           ) : null}
         </main>
       </div>
