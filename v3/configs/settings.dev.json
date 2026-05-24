@@ -1,0 +1,32 @@
+{
+  "network": {
+    "backend": {
+      "bind_host": "0.0.0.0",
+      "public_host": "",
+      "port": 8000,
+      "protocol": "http",
+      "ws_protocol": "ws"
+    },
+    "redis": {
+      "host": "localhost",
+      "port": 6379
+    },
+    "frontend": {
+      "host": "0.0.0.0",
+      "port": 3000,
+      "preview_port": 4173
+    },
+    "testing": {
+      "host": "127.0.0.1",
+      "frontend_port": 4174,
+      "backend_port": 8011
+    },
+    "cors": {
+      "origins": [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000"
+      ],
+      "origin_regex": "^https?://([a-zA-Z0-9.-]+)(:\\d+)?$"
+    }
+  }
+}

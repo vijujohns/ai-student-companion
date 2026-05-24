@@ -43,7 +43,7 @@ jobs:
           pip install pytest pytest-cov httpx
 
       - name: Run backend test suite
-        run: python -m pytest tests/ -v --tb=short --cov=app --cov-fail-under=60 -W error::DeprecationWarning
+        run: python -m pytest ../test_suite/backend -v --tb=short --cov=app --cov-config=.coveragerc --cov-fail-under=60 -W error::DeprecationWarning
 
   frontend-tests:
     name: Frontend Unit And Build
@@ -111,6 +111,6 @@ jobs:
         with:
           name: playwright-test-results
           path: |
-            v3/frontend/test-results
-            v3/frontend/playwright-report
+            v3/test-results/frontend/playwright-results
+            v3/test-results/frontend/playwright-report
           if-no-files-found: ignore

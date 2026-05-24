@@ -444,7 +444,7 @@ class TestContentReferences:
         mock_resolve_upload_record.return_value = {
             "id": 7,
             "display_name": "Uploaded Chapter",
-            "relative_path": "app/uploads/hash/Class 8/English-1/Text Books/Uploaded-Chapter.pdf",
+            "relative_path": "uploads/hash/Class 8/English-1/Text Books/Uploaded-Chapter.pdf",
         }
 
         resolved = resolve_content_reference({"username": "student"}, "upload:7")
@@ -514,7 +514,7 @@ class TestIndexJobLifecycle:
     @patch("app.modules.file_management._create_index_job")
     @patch("app.modules.file_management._load_files_for_scope")
     def test_queue_reindex_uses_managed_submission(self, mock_load_files, mock_create_job, mock_submit_job, mock_conn):
-        mock_load_files.return_value = [{"id": 1, "relative_path": "app/uploads/x.pdf"}]
+        mock_load_files.return_value = [{"id": 1, "relative_path": "uploads/x.pdf"}]
         mock_create_job.return_value = 91
         mock_submit_job.return_value = True
 
@@ -603,8 +603,8 @@ class TestIndexJobLifecycle:
         conn.cursor.return_value = cursor
         mock_conn_factory.return_value = conn
         mock_load_files.side_effect = [
-            [{"id": 3, "relative_path": "app/uploads/a.pdf"}],
-            [{"id": 4, "relative_path": "app/uploads/b.pdf"}],
+            [{"id": 3, "relative_path": "uploads/a.pdf"}],
+            [{"id": 4, "relative_path": "uploads/b.pdf"}],
         ]
         mock_submit_job.return_value = True
 

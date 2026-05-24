@@ -10,19 +10,20 @@ import tempfile
 from datetime import datetime
 
 from ..core.config_loader import get_app_env
+from ..core.env_vars import ENV
 
 # 🔥 Resolve project root dynamically
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
 
 
 def _resolve_db_file() -> str:
-    configured = str(os.getenv("APP_DB_FILE", "") or "").strip()
+    configured = str(os.getenv(ENV.APP_DB_FILE, "") or "").strip()
     if configured:
         return os.path.abspath(configured)
 
     app_env = get_app_env()
     if app_env == "test":
-        worker_id = str(os.getenv("PYTEST_XDIST_WORKER", "") or "").strip().lower()
+        worker_id = str(os.getenv(ENV.PYTEST_XDIST_WORKER, "") or "").strip().lower()
         process_id = str(os.getpid())
         suffix_parts = [part for part in (worker_id, process_id) if part]
         suffix = f".{'.'.join(suffix_parts)}" if suffix_parts else ""

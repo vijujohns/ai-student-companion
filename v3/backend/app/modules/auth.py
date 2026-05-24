@@ -10,28 +10,26 @@ from dotenv import load_dotenv
 from .user_manager import verify_password, get_user_by_identifier
 from .db import get_connection
 from ..core.debug_logger import dlog, derror
+from ..core.env_vars import ENV, env_bool
 
 load_dotenv()
 
-SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production")
-ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
-APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
-TOKEN_COOKIE_NAME = os.getenv("TOKEN_COOKIE_NAME", "access_token")
+SECRET_KEY = os.getenv(ENV.SECRET_KEY, "change-me-in-production")
+ALGORITHM = os.getenv(ENV.JWT_ALGORITHM, "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv(ENV.ACCESS_TOKEN_EXPIRE_MINUTES, "60"))
+APP_ENV = os.getenv(ENV.APP_ENV, "development").strip().lower()
+TOKEN_COOKIE_NAME = os.getenv(ENV.TOKEN_COOKIE_NAME, "access_token")
 
 
 def _env_flag(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return env_bool(name, default)
 
 
 AUTH_COOKIE_SECURE = _env_flag(
-    "AUTH_COOKIE_SECURE",
+    ENV.AUTH_COOKIE_SECURE,
     APP_ENV not in {"development", "dev", "test", "local"},
 )
-AUTH_COOKIE_SAMESITE = os.getenv("AUTH_COOKIE_SAMESITE", "lax").strip().lower()
+AUTH_COOKIE_SAMESITE = os.getenv(ENV.AUTH_COOKIE_SAMESITE, "lax").strip().lower()
 if AUTH_COOKIE_SAMESITE not in {"lax", "strict", "none"}:
     AUTH_COOKIE_SAMESITE = "lax"
 

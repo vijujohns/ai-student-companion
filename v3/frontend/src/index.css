@@ -106,6 +106,41 @@ code {
   overflow-y: visible;
 }
 
+.skip-link {
+  position: absolute;
+  left: 16px;
+  top: 16px;
+  z-index: 1000;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.65rem 0.85rem;
+  border-radius: 9999px;
+  background: rgba(17, 24, 39, 0.92);
+  color: #fff;
+  font-size: 0.85rem;
+  text-decoration: none;
+  transform: translateY(-120%);
+  opacity: 0;
+  transition: transform 160ms ease, opacity 160ms ease;
+}
+
+.skip-link svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.skip-link:focus-visible,
+.skip-link:hover {
+  transform: translateY(0);
+  opacity: 1;
+}
+
+.skip-link:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 4px;
+}
+
 .app-shell.app-shell--density-100 {
   --ui-space-scale: 1;
   --ui-font-scale: 1;

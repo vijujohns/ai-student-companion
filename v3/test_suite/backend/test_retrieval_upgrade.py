@@ -11,7 +11,7 @@ class TestHybridRetrieval:
             faiss_store.documents[:] = [
                 {"text": "General unrelated note.", "source": r"D:\GPT\ai-student-companion\v3\knowledge_base\General\misc.pdf"},
                 {"text": "Photosynthesis uses chlorophyll and sunlight to make food.", "source": r"D:\GPT\ai-student-companion\v3\knowledge_base\Class X\Science\bio.pdf"},
-                {"text": "My uploaded photosynthesis summary with chlorophyll examples.", "source": r"D:\GPT\ai-student-companion\v3\backend\app\uploads\abc123\notes.pdf"},
+                {"text": "My uploaded photosynthesis summary with chlorophyll examples.", "source": r"D:\GPT\ai-student-companion\v3\uploads\abc123\notes.pdf"},
             ]
 
             with (

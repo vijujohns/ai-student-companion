@@ -1,0 +1,8 @@
+[run]
+data_file = ../test-results/backend/.coverage
+
+[html]
+directory = ../test-results/backend/htmlcov
+
+[xml]
+output = ../test-results/backend/coverage.xml

@@ -13,6 +13,8 @@ import os
 from functools import lru_cache
 from typing import Dict, List, Optional
 
+from ..core.env_vars import ENV
+
 try:
     from deep_translator import GoogleTranslator  # type: ignore
 except ImportError:
@@ -59,7 +61,7 @@ _INDIC_LANGUAGE_CODES = {"hi", "bn", "ta", "te", "mr", "gu", "kn", "ml", "pa", "
 
 
 def _indictrans2_enabled() -> bool:
-    flag = str(os.getenv("ENABLE_INDIC_TRANS2", "")).strip().lower()
+    flag = str(os.getenv(ENV.ENABLE_INDIC_TRANS2, "")).strip().lower()
     return flag in {"1", "true", "yes", "on"}
 
 
@@ -68,9 +70,9 @@ def _load_indictrans2_backend(direction: str):
     from transformers import AutoModelForSeq2SeqLM, AutoTokenizer  # type: ignore
 
     if direction == "en-indic":
-        model_name = os.getenv("INDICTRANS2_EN_INDIC_MODEL", "ai4bharat/indictrans2-en-indic-1B")
+        model_name = os.getenv(ENV.INDICTRANS2_EN_INDIC_MODEL, "ai4bharat/indictrans2-en-indic-1B")
     else:
-        model_name = os.getenv("INDICTRANS2_INDIC_EN_MODEL", "ai4bharat/indictrans2-indic-en-1B")
+        model_name = os.getenv(ENV.INDICTRANS2_INDIC_EN_MODEL, "ai4bharat/indictrans2-indic-en-1B")
 
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     model = AutoModelForSeq2SeqLM.from_pretrained(model_name, trust_remote_code=True)

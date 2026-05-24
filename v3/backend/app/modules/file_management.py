@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 
 from fastapi import HTTPException, UploadFile
 
+from ..core.env_vars import ENV
 from .db import BASE_DIR, get_connection
 
 ALLOWED_NAME_RE = re.compile(r"^[A-Za-z0-9-]+$")
@@ -23,14 +24,14 @@ ALLOWED_IMAGE_MIME_TYPES = {
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 CONTENT_REF_KB_PREFIX = "kb:"
 CONTENT_REF_UPLOAD_PREFIX = "upload:"
-INDEX_JOB_WORKERS = max(1, int(os.getenv("INDEX_JOB_WORKERS", "2")))
+INDEX_JOB_WORKERS = max(1, int(os.getenv(ENV.INDEX_JOB_WORKERS, "2")))
 _INDEX_JOB_EXECUTOR = ThreadPoolExecutor(max_workers=INDEX_JOB_WORKERS, thread_name_prefix="indexing-job")
 _ACTIVE_JOB_IDS: set[int] = set()
 _ACTIVE_JOB_LOCK = threading.Lock()
 
 
 def _storage_base_dir() -> str:
-    path = os.path.join(BASE_DIR, "app", "uploads")
+    path = os.path.join(BASE_DIR, "uploads")
     os.makedirs(path, exist_ok=True)
     return path
 

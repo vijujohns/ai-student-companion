@@ -432,8 +432,6 @@ try { `$Host.UI.RawUI.WindowTitle = 'AI Student Companion Backend' } catch {}
 `$ErrorActionPreference = 'Stop'
 `$env:APP_ENV = '$selectedEnvironment'
 `$env:PYTHONIOENCODING = 'utf-8'
-`$env:BACKEND_BIND_HOST = '0.0.0.0'
-`$env:BACKEND_PORT = '8000'
 `$env:DEBUG_LOGGING = '$debugValue'
 `$env:DEBUG_LOG_FILE = '$debugLogEsc'
 `$env:KB_REINDEX_MODE = '$selectedReindexMode'
@@ -451,11 +449,12 @@ try {
 try { `$Host.UI.RawUI.WindowTitle = 'AI Student Companion Frontend' } catch {}
 `$ErrorActionPreference = 'Stop'
 `$env:APP_ENV = '$selectedEnvironment'
+`$env:VITE_APP_ENV = '$selectedEnvironment'
 `$env:BROWSER = 'none'
 Set-Location '$frontendDirEsc'
 Start-Transcript -Path '$frontendLogEsc' -Append | Out-Null
 try {
-    npm run dev -- --host 0.0.0.0 --port 3000 --strictPort
+    npm run dev -- --strictPort
 } finally {
     try { Stop-Transcript | Out-Null } catch {}
 }

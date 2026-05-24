@@ -27,9 +27,9 @@ import {
   FiX,
   FiZap,
 } from "react-icons/fi";
-import { FaArrowDown } from "react-icons/fa";
+import { FaArrowDown, FaVolumeUp, FaVolumeMute } from "react-icons/fa";
 import { apiFetch, parseApiError, getEnvelopeMessage, messageSummary } from "../services/api";
-import { sendMessage } from "../services/websocket";
+import { closeSocket, sendMessage } from "../services/websocket";
 import { useChatSendMessage } from "../hooks/useChatSendMessage";
 import { useChatWebSocketLifecycle } from "../hooks/useChatWebSocketLifecycle";
 import { useChatScroll } from "../hooks/useChatScroll";
@@ -2605,6 +2605,20 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
               onNewChat={handleNewChat}
               onExport={() => {/* TODO: implement export */}}
               isOnline={true} // TODO: implement connection status
+              headerActions={
+                <>
+                  <LanguagePicker onChange={setPreferredLanguage} compact={false} />
+                  <button
+                    type="button"
+                    className="header-button"
+                    onClick={toggleAutoSpeak}
+                    title={autoSpeak ? "Turn speaker off (Ctrl+Shift+S)" : "Turn speaker on (Ctrl+Shift+S)"}
+                    aria-label={autoSpeak ? "Turn speaker off (Ctrl+Shift+S)" : "Turn speaker on (Ctrl+Shift+S)"}
+                  >
+                    {autoSpeak ? <FaVolumeUp /> : <FaVolumeMute />}
+                  </button>
+                </>
+              }
             />
 
             <MessageList
@@ -2650,10 +2664,8 @@ export default function ChatPanel({ initialActiveTab = null, externalTabRequest 
               isLoading={isStreaming}
               placeholder="Ask a question, request a summary, or work through a problem..."
               voiceControlProps={{ onResult: handleVoice }}
-              languagePickerProps={{ onChange: setPreferredLanguage }}
-              autoSpeak={autoSpeak}
-              onToggleAutoSpeak={toggleAutoSpeak}
               isStreaming={isStreaming}
+              onNewChat={handleNewChat}
               onStopStreaming={() => {
                 closeSocket();
                 setIsStreaming(false);

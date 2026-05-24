@@ -6,7 +6,7 @@
  * with an on-screen message.
  */
 
-import settings from "../../../configs/settings.json";
+import settings from "../../../configs/loadSettings.mjs";
 
 const OFFLINE_MUTATION_QUEUE_KEY = "offline_mutation_queue_v1";
 const OFFLINE_GET_CACHE_KEY = "offline_get_cache_v1";
@@ -18,12 +18,12 @@ function resolveApiBaseUrl() {
   const protocol = backendCfg.protocol;
   const configuredPublicHost = (backendCfg.public_host || "").trim();
   if (!protocol) {
-    throw new Error("network.backend.protocol must be set in configs/settings.json");
+    throw new Error("network.backend.protocol must be set in merged config");
   }
   const host = configuredPublicHost || window.location.hostname;
   const port = Number(backendCfg.port);
   if (!Number.isFinite(port) || port <= 0) {
-    throw new Error("network.backend.port must be set in configs/settings.json");
+    throw new Error("network.backend.port must be set in merged config");
   }
   return `${protocol}://${host}:${port}`;
 }

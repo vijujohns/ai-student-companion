@@ -10,6 +10,7 @@ import threading
 from datetime import datetime, UTC
 from typing import Any, Dict, List, Optional
 from ..core.config_loader import get_default_model_profile, get_model_config, get_model_profiles_config, get_task_model
+from ..core.env_vars import ENV
 from .query_classifier import classify_query as shared_classify_query
 from ..core.debug_logger import dlog, derror, dwarn
 from .db import get_connection
@@ -253,7 +254,7 @@ def get_active_model_profile_key(force_refresh: bool = False) -> str:
     if not force_refresh and cached_key and (now - cached_ts) < _MODEL_PROFILE_CACHE_TTL:
         return str(cached_key)
 
-    raw_value = _read_app_setting("active_model_profile") or os.getenv("MODEL_PROFILE") or get_default_model_profile("balanced")
+    raw_value = _read_app_setting("active_model_profile") or os.getenv(ENV.MODEL_PROFILE) or get_default_model_profile("balanced")
     normalized = normalize_model_profile_key(raw_value)
     _MODEL_PROFILE_CACHE["key"] = normalized
     _MODEL_PROFILE_CACHE["ts"] = now
@@ -311,15 +312,19 @@ def _resolve_model_path(model_config):
     if not raw_path:
         raise ValueError("Model configuration is missing 'path'")
 
-    # Accept both absolute paths and relative paths from config.
+    # Accept absolute paths, v3-relative paths, and legacy backend-relative paths.
     if os.path.isabs(raw_path):
         model_path = raw_path
     else:
         normalized = raw_path.replace("\\", "/")
-        # Keep backward compatibility for paths already prefixed with backend/.
         if normalized.startswith("backend/"):
-            normalized = normalized[len("backend/"):]
-        model_path = os.path.join(BASE_DIR, "backend", normalized)
+            model_path = os.path.join(BASE_DIR, normalized)
+        else:
+            model_path = os.path.join(BASE_DIR, normalized)
+            if not os.path.exists(model_path):
+                legacy_path = os.path.join(BASE_DIR, "backend", normalized)
+                if os.path.exists(legacy_path):
+                    model_path = legacy_path
 
     model_path = os.path.abspath(model_path)
 
@@ -698,8 +703,8 @@ def _resolve_generation_params(model_config: Dict[str, Any], query: str, task: s
 def _cloud_provider_env_key(provider: str) -> Optional[str]:
     normalized = str(provider or "").strip().lower()
     return {
-        "openai": "OPENAI_API_KEY",
-        "groq": "GROQ_API_KEY",
+        "openai": ENV.OPENAI_API_KEY,
+        "groq": ENV.GROQ_API_KEY,
     }.get(normalized)
 
 
@@ -711,12 +716,12 @@ def _build_cloud_runtime_config(model_config: Dict[str, Any]) -> Dict[str, Any]:
 
     defaults = {
         "openai": {
-            "base_url": str(os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").strip(),
-            "timeout": float(os.getenv("OPENAI_TIMEOUT_SECONDS", "60")),
+            "base_url": str(os.getenv(ENV.OPENAI_BASE_URL) or "https://api.openai.com/v1").strip(),
+            "timeout": float(os.getenv(ENV.OPENAI_TIMEOUT_SECONDS, "60")),
         },
         "groq": {
-            "base_url": str(os.getenv("GROQ_BASE_URL") or "https://api.groq.com/openai/v1").strip(),
-            "timeout": float(os.getenv("GROQ_TIMEOUT_SECONDS", "60")),
+            "base_url": str(os.getenv(ENV.GROQ_BASE_URL) or "https://api.groq.com/openai/v1").strip(),
+            "timeout": float(os.getenv(ENV.GROQ_TIMEOUT_SECONDS, "60")),
         },
     }
 

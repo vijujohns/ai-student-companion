@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { FiBookOpen, FiEye, FiRefreshCw, FiSettings, FiShield, FiZap } from "react-icons/fi";
-import settings from "../../../configs/settings.json";
+import settings from "../../../configs/loadSettings.mjs";
 import { fetchAdminOverview, fetchAdminModelProfiles, updateAdminModelProfile } from "../services/adminService";
 
 function formatRoleLabel(role = "admin") {

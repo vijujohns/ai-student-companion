@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { FiBookOpen, FiCreditCard, FiDownload, FiLogOut, FiMoreVertical, FiUser, FiWifi, FiWifiOff } from "react-icons/fi";
+import { FiArrowRight, FiBookOpen, FiCreditCard, FiDownload, FiLogOut, FiMoreVertical, FiUser, FiWifi, FiWifiOff } from "react-icons/fi";
 import { GiBrain } from "react-icons/gi";
 import ChatPanel from "./components/ChatPanel";
 import Login from "./components/Login";
@@ -230,7 +230,14 @@ function App() {
 
   return (
     <div className={`app-shell app-shell--density-${uiDensity}`}>
-      <a className="skip-link" href="#main-content">Skip to main content</a>
+      <a
+        className="skip-link"
+        href="#main-content"
+        title="Skip directly to the main content"
+      >
+        <FiArrowRight aria-hidden="true" />
+        <span>Skip to main content</span>
+      </a>
       <div className="app-shell__backdrop" />
       <div className={`app-shell__content ${isLoggedIn ? "app-shell__content--workspace" : ""}`}>
         <header className="app-shell__header" role="banner">

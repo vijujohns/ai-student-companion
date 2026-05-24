@@ -42,7 +42,7 @@ def infer_source_type(source: Optional[str]) -> str:
         return "general"
     if "/knowledge_base/" in normalized:
         return "curriculum"
-    if "/app/uploads/" in normalized or "/uploads/" in normalized:
+    if "/uploads/" in normalized:
         return "upload"
     if any(marker in normalized for marker in ("learning_artifacts", "artifact", "flashcard", "lesson_plan", "assessment_papers", "quiz_results")):
         return "artifact"

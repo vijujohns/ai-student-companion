@@ -8,6 +8,8 @@ import sqlite3
 import json
 from dotenv import load_dotenv
 
+from ..core.env_vars import ENV
+
 load_dotenv()
 
 
@@ -48,8 +50,8 @@ def init_default_users(db_connection):
     """
     cursor = db_connection.cursor()
 
-    app_env = os.getenv("APP_ENV", "development").strip().lower()
-    enable_default_users = os.getenv("ENABLE_DEFAULT_USERS", "").strip().lower()
+    app_env = os.getenv(ENV.APP_ENV, "development").strip().lower()
+    enable_default_users = os.getenv(ENV.ENABLE_DEFAULT_USERS, "").strip().lower()
     if enable_default_users not in {"1", "true", "yes"} and app_env in {"production", "prod", "staging"}:
         return
     

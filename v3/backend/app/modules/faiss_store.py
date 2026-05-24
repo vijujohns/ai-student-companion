@@ -10,6 +10,7 @@ import json
 import threading
 
 from ..core.config_loader import get_rag_config
+from ..core.env_vars import ENV
 from .retrieval_orchestrator import hybrid_rank_results
 
 # Paths
@@ -21,7 +22,7 @@ DOC_FILE = os.path.join(DATA_DIR, "documents.pkl")
 META_FILE = os.path.join(DATA_DIR, "metadata.json")
 MULTI_INDEX_FILE = os.path.join(DATA_DIR, "logical_indexes.json")
 
-_DEFAULT_EMBEDDING_DIM = int(os.getenv("FAISS_EMBEDDING_DIM", "768"))
+_DEFAULT_EMBEDDING_DIM = int(os.getenv(ENV.FAISS_EMBEDDING_DIM, "768"))
 _MODEL_LOCK = threading.RLock()
 
 

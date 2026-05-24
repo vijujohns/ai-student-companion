@@ -1,8 +1,8 @@
 ﻿{
-    "startedAt":  "2026-05-14T00:34:03.1704864+05:30",
-    "backendPid":  3680,
-    "frontendPid":  12480,
-    "logPid":  17892,
+    "startedAt":  "2026-05-24T11:49:27.7473293+05:30",
+    "backendPid":  17732,
+    "frontendPid":  14728,
+    "logPid":  2004,
     "appEnv":  "dev",
     "debugMode":  true,
     "background":  false,

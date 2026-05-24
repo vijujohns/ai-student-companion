@@ -1,6 +1,6 @@
 // src/services/websocket.js
 import { API_BASE_URL, dispatchSessionExpired } from "./api";
-import settings from "../../../configs/settings.json";
+import settings from "../../../configs/loadSettings.mjs";
 
 let sockets = {}; // manage multiple sockets by type
 let callbacks = {}; // store message/close callbacks by type
@@ -42,12 +42,12 @@ function resolveWsBaseUrl() {
   const wsProtocol = backendCfg.ws_protocol;
   const configuredPublicHost = (backendCfg.public_host || "").trim();
   if (!wsProtocol) {
-    throw new Error("network.backend.ws_protocol must be set in configs/settings.json");
+    throw new Error("network.backend.ws_protocol must be set in merged config");
   }
   const host = configuredPublicHost || window.location.hostname;
   const port = Number(backendCfg.port);
   if (!Number.isFinite(port) || port <= 0) {
-    throw new Error("network.backend.port must be set in configs/settings.json");
+    throw new Error("network.backend.port must be set in merged config");
   }
   const configuredBase = `${wsProtocol}://${host}:${port}`;
   if (configuredBase) return configuredBase;

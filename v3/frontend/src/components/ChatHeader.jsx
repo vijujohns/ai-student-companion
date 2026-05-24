@@ -7,6 +7,7 @@ const ChatHeader = ({
   sessionId,
   onNewChat,
   onExport,
+  headerActions,
   isOnline = true
 }) => {
   return (
@@ -27,6 +28,8 @@ const ChatHeader = ({
         </div>
 
         <div className="header-actions">
+          {headerActions}
+
           <button
             type="button"
             className="header-button"

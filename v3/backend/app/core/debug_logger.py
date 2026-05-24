@@ -3,7 +3,7 @@ Debug Logger — Brain Teaser
 -----------------------------
 Controlled entirely by environment variables.
 Set DEBUG_LOGGING=true in backend/.env to enable.
-Set DEBUG_LOG_FILE=logs/debug.log to also write to a file.
+Set DEBUG_LOG_FILE=../logs/debug.log to also write to a file.
 
 Usage:
     from .core.debug_logger import dlog, is_debug
@@ -16,11 +16,13 @@ import sys
 import logging
 from dotenv import load_dotenv
 
+from .env_vars import ENV
+
 load_dotenv()
 
 # ── Config from environment ──────────────────────────────────────────────────
-_DEBUG: bool = os.getenv("DEBUG_LOGGING", "false").lower() in ("true", "1", "yes")
-_LOG_FILE: str = os.getenv("DEBUG_LOG_FILE", "")
+_DEBUG: bool = os.getenv(ENV.DEBUG_LOGGING, "false").lower() in ("true", "1", "yes")
+_LOG_FILE: str = os.getenv(ENV.DEBUG_LOG_FILE, "")
 
 # Never let logging internals crash request handling on Windows consoles.
 logging.raiseExceptions = False

@@ -1,0 +1,32 @@
+{
+  "network": {
+    "backend": {
+      "bind_host": "0.0.0.0",
+      "public_host": "api.yourdomain.com",
+      "port": 443,
+      "protocol": "https",
+      "ws_protocol": "wss"
+    },
+    "redis": {
+      "host": "redis.internal",
+      "port": 6379
+    },
+    "frontend": {
+      "host": "0.0.0.0",
+      "port": 3000,
+      "preview_port": 4173
+    },
+    "testing": {
+      "host": "127.0.0.1",
+      "frontend_port": 4174,
+      "backend_port": 8011
+    },
+    "cors": {
+      "origins": [
+        "https://yourdomain.com",
+        "https://www.yourdomain.com"
+      ],
+      "origin_regex": "^https://([a-zA-Z0-9-]+\\.)?yourdomain\\.com$"
+    }
+  }
+}

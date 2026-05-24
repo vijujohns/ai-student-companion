@@ -1,8 +1,6 @@
 import React from "react";
 import {
   FiBook,
-  FiBookOpen,
-  FiCheck,
   FiEdit,
   FiEye,
   FiEyeOff,
@@ -12,10 +10,7 @@ import {
   FiLayers,
   FiRefreshCw,
 } from "react-icons/fi";
-import {
-  getLearningContextPillItems,
-  getLearningContextReadinessMeta,
-} from "../utils/kbSelectors";
+import { getLearningContextPillItems } from "../utils/kbSelectors";
 
 export default function LearningContextBar({
   fileInputRef,
@@ -43,11 +38,9 @@ export default function LearningContextBar({
     selectedContentItem,
   });
 
-  const readiness = getLearningContextReadinessMeta({
-    pendingUploadsInScope,
-    hasRequiredStudyContext,
-    isExplorerMode,
-  });
+  const isIndexingInProgress = Boolean(contextProcessing && !contextProcessing.ready);
+
+  const indexingLabel = contextProcessing?.title || "Indexing in Progress";
 
   return (
     <div className="workspace-context-bar">
@@ -84,6 +77,19 @@ export default function LearningContextBar({
               </>
             )}
 
+          </div>
+
+          <div className="workspace-context-actions workspace-context-actions--selectors-row">
+            {isIndexingInProgress && (
+              <span
+                className="status-pill status-pill--accent workspace-context-pill"
+                title={indexingLabel}
+              >
+                <FiRefreshCw />
+                <span className="workspace-context-pill__text">Indexing in Progress</span>
+              </span>
+            )}
+
             {hasViewerContent && (
               <button
                 type="button"
@@ -98,16 +104,9 @@ export default function LearningContextBar({
               </button>
             )}
 
-            <span className="status-pill status-pill--accent workspace-context-pill" title={readiness.label}>
-              {pendingUploadsInScope > 0 ? <FiRefreshCw /> : <FiCheck />}
-              <span className="workspace-context-pill__text">{readiness.label}</span>
-            </span>
-          </div>
-
-          <div className="workspace-context-actions workspace-context-actions--selectors-row">
             <button
               type="button"
-              className="secondary-button"
+              className="status-pill status-pill--button workspace-context-pill"
               onClick={() => openContextModal("Choose your class and subject to personalize the workspace.")}
             >
               <FiEdit />

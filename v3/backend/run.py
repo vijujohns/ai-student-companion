@@ -23,6 +23,7 @@ sys.path.insert(0, backend_dir)
 # Now import and run uvicorn
 import uvicorn
 from app.core.config_loader import get_backend_bind_config
+from app.core.env_vars import ENV
 
 
 def _probe_host_for(bind_host: str) -> str:
@@ -87,11 +88,11 @@ if __name__ == "__main__":
 
     cli_reindex_mode = _normalize_reindex_cli_value(cli_args.reindex)
     if cli_reindex_mode:
-        os.environ["KB_REINDEX_MODE"] = cli_reindex_mode
+        os.environ[ENV.KB_REINDEX_MODE] = cli_reindex_mode
         if cli_reindex_mode == "skip":
-            os.environ["SKIP_KB_REINDEX"] = "1"
+            os.environ[ENV.SKIP_KB_REINDEX] = "1"
         else:
-            os.environ.pop("SKIP_KB_REINDEX", None)
+            os.environ.pop(ENV.SKIP_KB_REINDEX, None)
 
     bind_cfg = get_backend_bind_config()
     probe_host = _probe_host_for(bind_cfg["host"])
@@ -101,7 +102,7 @@ if __name__ == "__main__":
         if _is_existing_backend_alive(probe_host, probe_port):
             print(f"ℹ️ Backend already running at http://{probe_host}:{probe_port} — reusing existing server.")
             raise SystemExit(0)
-        print(f"⚠️ Port {probe_port} is already in use on {probe_host}. Stop the existing process or change BACKEND_PORT.")
+        print(f"⚠️ Port {probe_port} is already in use on {probe_host}. Stop the existing process or change {ENV.BACKEND_PORT}.")
         raise SystemExit(1)
 
     uvicorn.run(

@@ -1,0 +1,7 @@
+export const ENV_NAMES = Object.freeze({
+  APP_ENV: "APP_ENV",
+  NODE_ENV: "NODE_ENV",
+  VITE_APP_ENV: "VITE_APP_ENV",
+  VITE_API_BASE_URL: "VITE_API_BASE_URL",
+  VITE_WS_BASE_URL: "VITE_WS_BASE_URL",
+});

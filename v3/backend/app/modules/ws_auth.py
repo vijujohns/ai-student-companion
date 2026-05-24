@@ -2,21 +2,18 @@
 WebSocket authentication utilities
 """
 
-import os
 from typing import Optional
 from http.cookies import SimpleCookie
 from fastapi import WebSocket, status
 from .auth import TOKEN_COOKIE_NAME, verify_token
+from ..core.env_vars import ENV, env_bool
 
 
 def _env_flag(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return env_bool(name, default)
 
 
-ALLOW_WS_QUERY_TOKEN = _env_flag("ALLOW_WS_QUERY_TOKEN", False)
+ALLOW_WS_QUERY_TOKEN = _env_flag(ENV.ALLOW_WS_QUERY_TOKEN, False)
 
 
 async def get_token_from_websocket(ws: WebSocket) -> Optional[str]:

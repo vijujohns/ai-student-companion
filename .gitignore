@@ -1,7 +1,7 @@
 # =============================================================================
 # AI Student Companion — Master .gitignore
 # One file at repo root covers the entire monorepo.
-# Sub-.gitignore: v3/backend/models/.gitignore kept intentionally
+# Sub-.gitignore: v3/models/.gitignore kept intentionally
 #   (uses * + !.gitignore to track the empty dir without model binaries).
 # =============================================================================
 
@@ -34,8 +34,14 @@ ENV/
 htmlcov/
 coverage.xml
 *.cover
-v3/frontend/test-results/
-v3/frontend/playwright-report/
+v3/test-results/*
+!v3/test-results/.gitkeep
+!v3/test-results/backend/
+v3/test-results/backend/*
+!v3/test-results/backend/.gitkeep
+!v3/test-results/frontend/
+v3/test-results/frontend/*
+!v3/test-results/frontend/.gitkeep
 
 # -------------------------
 # Environment / Secrets  ← NEVER commit these
@@ -74,8 +80,8 @@ pnpm-debug.log*
 # -------------------------
 # User Uploads  ← runtime data, not source
 # -------------------------
-v3/app/uploads/*
-!v3/app/uploads/.gitkeep
+v3/uploads/*
+!v3/uploads/.gitkeep
 
 # -------------------------
 # Runtime-generated Data  ← FAISS index, SQLite DB, caches
@@ -87,12 +93,10 @@ v3/data/metadata.json
 v3/data/pdf_summaries.json
 
 # -------------------------
-# Logs  ← ignores log files and log dir contents at any depth
+# Logs  ← only the canonical runtime log directory is ignored
 # -------------------------
-*.log
-logs/*
-!logs/.gitkeep
-!**/logs/.gitkeep
+v3/logs/*
+!v3/logs/.gitkeep
 
 # -------------------------
 # General Caches

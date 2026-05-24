@@ -10,9 +10,10 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
+import os
+
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-import os
 from dotenv import load_dotenv
 
 from .api.routes import router
@@ -25,6 +26,7 @@ from .modules.file_management import recover_indexing_jobs
 from .modules.db import init_db
 from .core.debug_logger import dlog, is_debug
 from .core.config_loader import get_app_env, get_cors_origins, get_cors_origin_regex
+from .core.env_vars import ENV, env_bool
 from .modules.messages import error_envelope, get_message
 
 import sys
@@ -53,7 +55,7 @@ def _route_domain(path: str) -> str:
 
 def _resolve_startup_reindex_mode() -> str:
     """Return the backend startup reindex mode: skip by default, or incremental/full when explicitly requested."""
-    raw_mode = str(os.getenv("KB_REINDEX_MODE", "skip") or "skip").strip().lower()
+    raw_mode = str(os.getenv(ENV.KB_REINDEX_MODE, "skip") or "skip").strip().lower()
     normalized = {
         "": "skip",
         "false": "skip",
@@ -76,7 +78,7 @@ def _resolve_startup_reindex_mode() -> str:
         "fresh": "full",
     }.get(raw_mode, "skip")
 
-    legacy_skip = str(os.getenv("SKIP_KB_REINDEX", "")).strip().lower() in {"1", "true", "yes", "on"}
+    legacy_skip = env_bool(ENV.SKIP_KB_REINDEX, False)
     if legacy_skip:
         return "skip"
     return normalized
@@ -173,7 +175,7 @@ async def lifespan(app: FastAPI):
     init_db()
     dlog("STARTUP", "Database initialized")
 
-    recovery_enabled = str(os.getenv("DISABLE_INDEX_JOB_RECOVERY", "")).strip().lower() not in {"1", "true", "yes", "on"}
+    recovery_enabled = not env_bool(ENV.DISABLE_INDEX_JOB_RECOVERY, False)
     if get_app_env() == "test":
         recovery_enabled = False
 
@@ -203,7 +205,7 @@ async def add_request_id_header(request: Request, call_next):
     return response
 
 
-# CORS configuration is centralized in configs/settings.json
+# CORS configuration is centralized in merged config files.
 allowed_origins = get_cors_origins()
 allowed_origin_regex = get_cors_origin_regex()
 dlog("STARTUP", "CORS configured", origins=allowed_origins, origin_regex=allowed_origin_regex)

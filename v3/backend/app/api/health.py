@@ -2,6 +2,7 @@
 Health and diagnostics API router.
 """
 import os
+
 from typing import Any
 from fastapi import APIRouter
 
@@ -18,6 +19,7 @@ from ..modules.model_manager import (
     is_model_available,
     list_models,
 )
+from ..core.env_vars import ENV, env_bool
 
 router = APIRouter()
 
@@ -118,8 +120,8 @@ def _runtime_diagnostic_checks() -> dict:
 
 @router.get("/health/runtime")
 def runtime_health():
-    raw_mode = str(os.getenv("KB_REINDEX_MODE", "skip") or "skip").strip().lower()
-    if str(os.getenv("SKIP_KB_REINDEX", "")).strip().lower() in {"1", "true", "yes", "on"}:
+    raw_mode = str(os.getenv(ENV.KB_REINDEX_MODE, "skip") or "skip").strip().lower()
+    if env_bool(ENV.SKIP_KB_REINDEX, False):
         raw_mode = "skip"
     if raw_mode in {"true", "1", "yes", "on", "changed"}:
         raw_mode = "incremental"
